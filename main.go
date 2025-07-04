@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"bytes" // Added for PNG encoding buffer
+	"image" // Added for image manipulation
+	"image/draw" // Added for drawing images
 	"image/png" // Added for PNG encoding
 
 	"github.com/signintech/gopdf"
@@ -69,13 +71,18 @@ func convertWebPToPDF(inputDir, outputFile string) error {
 			continue
 		}
 
-		img, err := webp.Decode(file)
+		decodedImg, err := webp.Decode(file)
 		if err != nil {
 			file.Close()
 			log.Printf("... ⚠️  could not decode WebP file %s: %v. Skipping.", filename, err)
 			continue
 		}
 		file.Close()
+
+		// Convert to 8-bit depth (NRGBA)
+		bounds := decodedImg.Bounds()
+		img := image.NewNRGBA(bounds)
+		draw.Draw(img, bounds, decodedImg, bounds.Min, draw.Src)
 
 		// Encode the image.Image to PNG format into a bytes.Buffer
 		var pngBuffer bytes.Buffer
