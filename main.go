@@ -1,48 +1,54 @@
 package main
 
 import (
-	// "flag" // Removed for web server
-	"bytes"
+	"flag"
 	"fmt"
-	"image"        // Added for image manipulation
-	"image/draw"   // Added for explicit conversion to NRGBA
-	_ "image/jpeg" // Added for JPEG decoding (register decoder)
-	_ "image/png"  // Added for PNG encoding (register decoder)
+	"github.com/disintegration/imaging" // Added for image conversion
+	"github.com/signintech/gopdf"
+	_ "golang.org/x/image/webp" // Added for WebP decoding (register decoder)
+	"image"                     // Added for image manipulation
+	"image/draw"                // Added for explicit conversion to NRGBA
+	_ "image/jpeg"              // Added for JPEG decoding (register decoder)
+	_ "image/png"               // Added for PNG encoding (register decoder)
+	"io"
 	"log"
-	"mime/multipart" // Added for multipart form parsing
-	"net/http"       // Added for HTTP server
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync" // Added for sync.WaitGroup
-	"github.com/disintegration/imaging" // Added for image conversion
-	"github.com/signintech/gopdf"
-	_ "golang.org/x/image/webp" // Added for WebP decoding (register decoder)
 )
 
 func main() {
-	 // Define command-line flags for input and output paths - REMOVED
-	 inputDir := flag.String("i", ".", "Input directory containing image files (.webp, .jpg, .jpeg, .png)")
-	 outputFile := flag.String("o", "output.pdf", "Output PDF file name")
-	 flag.Parse()
+	// Define command-line flags for input and output paths - REMOVED
+	inputDir := flag.String("i", ".", "Input directory containing image files (.webp, .jpg, .jpeg, .png)")
+	outputFile := flag.String("o", "output.pdf", "Output PDF file name")
+	flag.Parse()
 
-	 // Call the main conversion function - REMOVED
-	 err := convertImagesToPDF(*inputDir, *outputFile)
-	 if err != nil {
-	 	log.Fatalf("❌ Failed to convert images to PDF: %v", err)
-	 }
-	 fmt.Printf("✅ Successfully created '%s' from images in '%s'\n", *outputFile, *inputDir)
+	// Call the main conversion function - REMOVED
+	outFile, err := os.Create(*outputFile)
+	if err != nil {
+		log.Fatalf("❌ Could not create output file: %v", err)
+	}
+	defer func(outFile *os.File) {
+		err = outFile.Close()
+		if err != nil {
+			log.Fatalf("❌ Could not close output file %s: %v", *outputFile, err)
+		}
+	}(outFile)
+	err = convertImagesToPDF(*inputDir, outFile)
+	if err != nil {
+		log.Fatalf("❌ Failed to convert images to PDF: %v", err)
+	}
+	fmt.Printf("✅ Successfully created '%s' from images in '%s'\n", *outputFile, *inputDir)
 }
-
 
 // convertImagesToPDF finds all supported image files, decodes them, and adds them to a PDF.
 // It now writes the PDF directly to an io.Writer.
-func convertImagesToPDF(inputDir string, writer io.Writer) (int64, error) {
+func convertImagesToPDF(inputDir string, writer io.Writer) error {
 	// 1. Read all files from the input directory
 	files, err := os.ReadDir(inputDir)
 	if err != nil {
-		return 0, fmt.Errorf("could not read directory %s: %w", inputDir, err)
+		return fmt.Errorf("could not read directory %s: %w", inputDir, err)
 	}
 
 	// 2. Filter for supported image files and store their names
@@ -60,7 +66,7 @@ func convertImagesToPDF(inputDir string, writer io.Writer) (int64, error) {
 	}
 
 	if len(imageFiles) == 0 {
-		return 0, fmt.Errorf("no supported image files (.webp, .jpg, .jpeg, .png) found in directory %s", inputDir)
+		return fmt.Errorf("no supported image files (.webp, .jpg, .jpeg, .png) found in directory %s", inputDir)
 	}
 
 	// 3. Sort the files alphabetically
@@ -75,10 +81,10 @@ func convertImagesToPDF(inputDir string, writer io.Writer) (int64, error) {
 
 	// Define a struct to hold processed image data and its original index for ordering.
 	type ProcessedImage struct {
-		Index      int
-		Filename   string
-		Image      image.Image
-		Error      error
+		Index    int
+		Filename string
+		Image    image.Image
+		Error    error
 	}
 
 	// Number of concurrent decoders. Let's use a reasonable number, e.g., number of CPUs or a fixed value.
@@ -97,7 +103,7 @@ func convertImagesToPDF(inputDir string, writer io.Writer) (int64, error) {
 	// Launch goroutines to decode images.
 	for i, filename := range imageFiles {
 		go func(idx int, fname string) {
-			semaphoreChan <- struct{}{} // Acquire a slot
+			semaphoreChan <- struct{}{}        // Acquire a slot
 			defer func() { <-semaphoreChan }() // Release the slot
 
 			fullPath := filepath.Join(inputDir, fname)
@@ -169,9 +175,9 @@ func convertImagesToPDF(inputDir string, writer io.Writer) (int64, error) {
 	}
 
 	// 6. Write the final PDF directly to the provided io.Writer.
-	n, err := pdf.WriteTo(writer)
+	_, err = pdf.WriteTo(writer)
 	if err != nil {
-		return 0, fmt.Errorf("could not write PDF to writer: %w", err)
+		return fmt.Errorf("could not write PDF to writer: %w", err)
 	}
 
 	return nil
