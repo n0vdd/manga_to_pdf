@@ -12,6 +12,7 @@ import (
 	_ "image/jpeg" // Added for JPEG decoding (register decoder)
 	_ "image/png" // Added for PNG encoding (register decoder)
 
+	"github.com/disintegration/imaging" // Added for image conversion
 	"github.com/signintech/gopdf"
 	_ "golang.org/x/image/webp" // Added for WebP decoding (register decoder)
 )
@@ -106,10 +107,17 @@ func convertImagesToPDF(inputDir, outputFile string) error {
 
 			// Use image.Decode which automatically detects the format.
 			// Ensure necessary image format packages (image/jpeg, image/png, golang.org/x/image/webp) are imported for decoder registration.
-			decodedImg, _, err := image.Decode(file) // The second return value is format string, ignored here.
+			decodedImg, formatName, err := image.Decode(file) // The second return value is format string, ignored here.
 			if err != nil {
 				processedImageChan <- ProcessedImage{Index: idx, Filename: fname, Error: fmt.Errorf("could not decode image: %w", err)}
 				return
+			}
+
+			// Check for 16-bit depth images and convert them to 8-bit NRGBA
+			switch img := decodedImg.(type) {
+			case *image.Gray16, *image.NRGBA64, *image.RGBA64:
+				log.Printf("... Converting 16-bit image %s (format: %s) to 8-bit NRGBA", fname, formatName)
+				decodedImg = imaging.Clone(img) // imaging.Clone returns an *image.NRGBA
 			}
 
 			processedImageChan <- ProcessedImage{Index: idx, Filename: fname, Image: decodedImg}
