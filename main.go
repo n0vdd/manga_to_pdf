@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"bytes" // Added for PNG encoding buffer
+	"image/png" // Added for PNG encoding
 
 	"github.com/signintech/gopdf"
 	"golang.org/x/image/webp"
@@ -75,6 +77,21 @@ func convertWebPToPDF(inputDir, outputFile string) error {
 		}
 		file.Close()
 
+		// Encode the image.Image to PNG format into a bytes.Buffer
+		var pngBuffer bytes.Buffer
+		err = png.Encode(&pngBuffer, img)
+		if err != nil {
+			log.Printf("... ⚠️  could not encode image %s to PNG: %v. Skipping.", filename, err)
+			continue
+		}
+
+		// Create ImageHolder from the reader
+		holder, err := gopdf.ImageHolderByReader(&pngBuffer)
+		if err != nil {
+			log.Printf("... ⚠️  could not create image holder for %s: %v. Skipping.", filename, err)
+			continue
+		}
+
 		width := float64(img.Bounds().Dx())
 		height := float64(img.Bounds().Dy())
 
@@ -83,15 +100,6 @@ func convertWebPToPDF(inputDir, outputFile string) error {
 			PageSize: &gopdf.Rect{W: width, H: height},
 		}
 		pdf.AddPageWithOption(pageOptions)
-
-		// --- THE FIX IS HERE ---
-		// Use the correct function `ImageHolderByImage` to create the holder.
-		holder, err := gopdf.ImageHolderByImage(img)
-		if err != nil {
-			log.Printf("... ⚠️  could not create image holder for %s: %v. Skipping.", filename, err)
-			continue
-		}
-		// --- END OF FIX ---
 
 		// Draw the image onto the page.
 		err = pdf.ImageByHolder(holder, 0, 0, &gopdf.Rect{W: width, H: height})
