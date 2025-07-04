@@ -3,16 +3,16 @@ package main
 import (
 	"flag"
 	"fmt"
+	"image"        // Added for image manipulation
+	"image/draw"   // Added for explicit conversion to NRGBA
+	_ "image/jpeg" // Added for JPEG decoding (register decoder)
+	_ "image/png"  // Added for PNG encoding (register decoder)
 	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync" // Added for sync.WaitGroup
-	"image" // Added for image manipulation
-	"image/draw" // Added for explicit conversion to NRGBA
-	_ "image/jpeg" // Added for JPEG decoding (register decoder)
-	_ "image/png" // Added for PNG encoding (register decoder)
 
 	"github.com/disintegration/imaging" // Added for image conversion
 	"github.com/signintech/gopdf"
@@ -147,7 +147,12 @@ func processImage(imagePath string) (image.Image, error) {
 	if err != nil {
 		return nil, fmt.Errorf("could not open file: %w", err)
 	}
-	defer file.Close()
+	defer func(file *os.File) {
+		err = file.Close()
+		if err != nil {
+			log.Fatalf("could not close image file %s: %v", imagePath, err)
+		}
+	}(file)
 
 	// Use image.Decode which automatically detects the format.
 	decodedImg, formatName, err := image.Decode(file)
