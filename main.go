@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"image" // Added for image manipulation
+	"image/draw" // Added for explicit conversion to NRGBA
 	_ "image/jpeg" // Added for JPEG decoding (register decoder)
 	_ "image/png" // Added for PNG encoding (register decoder)
 
@@ -116,11 +117,16 @@ func convertImagesToPDF(inputDir, outputFile string) error {
 			// Check for 16-bit depth images and convert them to 8-bit NRGBA
 			switch img := decodedImg.(type) {
 			case *image.Gray16, *image.NRGBA64, *image.RGBA64:
-				log.Printf("... Converting 16-bit image %s (format: %s) to 8-bit NRGBA", fname, formatName)
-				decodedImg = imaging.Clone(img) // imaging.Clone returns an *image.NRGBA
+				log.Printf("... Converting 16-bit image %s (format: %s) to 8-bit NRGBA via imaging.Clone", fname, formatName)
+				decodedImg = imaging.Clone(img) // imaging.Clone should return an *image.NRGBA
 			}
 
-			processedImageChan <- ProcessedImage{Index: idx, Filename: fname, Image: decodedImg}
+			// Explicitly convert to image.NRGBA to ensure 8-bit depth and compatible color model for gopdf
+			bounds := decodedImg.Bounds()
+			finalImg := image.NewNRGBA(bounds)
+			draw.Draw(finalImg, bounds, decodedImg, bounds.Min, draw.Src)
+
+			processedImageChan <- ProcessedImage{Index: idx, Filename: fname, Image: finalImg}
 		}(i, filename)
 	}
 
