@@ -60,63 +60,90 @@ func convertWebPToPDF(inputDir, outputFile string) error {
 	pdf := gopdf.GoPdf{}
 	pdf.Start(gopdf.Config{PageSize: *gopdf.PageSizeA4}) // Default, will be overridden
 
-	// 5. Loop through each WebP file and add it to the PDF
-	for _, filename := range webpFiles {
-		fullPath := filepath.Join(inputDir, filename)
-		fmt.Printf("Processing: %s\n", filename)
+	// 5. Process images concurrently and add them to the PDF sequentially.
 
-		file, err := os.Open(fullPath)
-		if err != nil {
-			log.Printf("... ⚠️  could not open file %s: %v. Skipping.", filename, err)
+	// Define a struct to hold processed image data and its original index for ordering.
+	type ProcessedImage struct {
+		Index      int
+		Filename   string
+		Image      image.Image
+		Error      error
+	}
+
+	// Number of concurrent decoders. Let's use a reasonable number, e.g., number of CPUs or a fixed value.
+	// For simplicity, let's use a fixed number like 4. This can be tuned.
+	// runtime.NumCPU() could also be used.
+	maxConcurrentDecoders := 4
+
+	// Create a channel to send processed image data.
+	// The buffer size is len(webpFiles) to prevent blocking if PDF processing is slow,
+	// though with a semaphore, this might not be strictly necessary if workers block on semaphore.
+	// Let's make it unbuffered and rely on the semaphore for backpressure.
+	processedImageChan := make(chan ProcessedImage)
+	// Create a semaphore channel to limit concurrency.
+	semaphoreChan := make(chan struct{}, maxConcurrentDecoders)
+
+	// Launch goroutines to decode images.
+	for i, filename := range webpFiles {
+		go func(idx int, fname string) {
+			semaphoreChan <- struct{}{} // Acquire a slot
+			defer func() { <-semaphoreChan }() // Release the slot
+
+			fullPath := filepath.Join(inputDir, fname)
+			fmt.Printf("Decoding: %s\n", fname)
+
+			file, err := os.Open(fullPath)
+			if err != nil {
+				processedImageChan <- ProcessedImage{Index: idx, Filename: fname, Error: fmt.Errorf("could not open file: %w", err)}
+				return
+			}
+			defer file.Close()
+
+			decodedImg, err := webp.Decode(file)
+			if err != nil {
+				processedImageChan <- ProcessedImage{Index: idx, Filename: fname, Error: fmt.Errorf("could not decode WebP: %w", err)}
+				return
+			}
+
+			processedImageChan <- ProcessedImage{Index: idx, Filename: fname, Image: decodedImg}
+		}(i, filename)
+	}
+
+	// Collect results and add to PDF.
+	// We need to store them temporarily to ensure correct order if they arrive out of order.
+	results := make([]ProcessedImage, len(webpFiles))
+	for i := 0; i < len(webpFiles); i++ {
+		res := <-processedImageChan
+		results[res.Index] = res // Store in the correct order using the original index
+	}
+	close(processedImageChan)
+	close(semaphoreChan)
+
+	// Now add images to PDF in the original sorted order.
+	for _, res := range results {
+		if res.Error != nil {
+			log.Printf("... ⚠️  Error processing %s: %v. Skipping.", res.Filename, res.Error)
 			continue
 		}
 
-		decodedImg, err := webp.Decode(file)
-		if err != nil {
-			file.Close()
-			log.Printf("... ⚠️  could not decode WebP file %s: %v. Skipping.", filename, err)
-			continue
-		}
-		file.Close()
+		fmt.Printf("Adding to PDF: %s\n", res.Filename)
+		decodedImg := res.Image
+		width := float64(decodedImg.Bounds().Dx())
+		height := float64(decodedImg.Bounds().Dy())
 
-		// Convert to 8-bit depth (NRGBA)
-		bounds := decodedImg.Bounds()
-		img := image.NewNRGBA(bounds)
-		draw.Draw(img, bounds, decodedImg, bounds.Min, draw.Src)
-
-		// Encode the image.Image to PNG format into a bytes.Buffer
-		var pngBuffer bytes.Buffer
-		err = png.Encode(&pngBuffer, img)
-		if err != nil {
-			log.Printf("... ⚠️  could not encode image %s to PNG: %v. Skipping.", filename, err)
-			continue
-		}
-
-		// Create ImageHolder from the reader
-		holder, err := gopdf.ImageHolderByReader(&pngBuffer)
-		if err != nil {
-			log.Printf("... ⚠️  could not create image holder for %s: %v. Skipping.", filename, err)
-			continue
-		}
-
-		width := float64(img.Bounds().Dx())
-		height := float64(img.Bounds().Dy())
-
-		// Add a new page with the precise dimensions of the image
 		pageOptions := gopdf.PageOption{
 			PageSize: &gopdf.Rect{W: width, H: height},
 		}
 		pdf.AddPageWithOption(pageOptions)
 
-		// Draw the image onto the page.
-		err = pdf.ImageByHolder(holder, 0, 0, &gopdf.Rect{W: width, H: height})
+		err := pdf.ImageFrom(decodedImg, 0, 0, &gopdf.Rect{W: width, H: height})
 		if err != nil {
-			log.Printf("... ⚠️  could not draw image %s on PDF: %v. Skipping.", filename, err)
+			log.Printf("... ⚠️  could not draw image %s on PDF using ImageFrom: %v. Skipping.", res.Filename, err)
 			continue
 		}
 	}
 
-	// 6. Write the final PDF to the specified output file
+	// 6. Write the final PDF to the specified output file.
 	err = pdf.WritePdf(outputFile)
 	if err != nil {
 		return fmt.Errorf("could not save PDF file: %w", err)
