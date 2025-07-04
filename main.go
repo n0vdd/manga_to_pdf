@@ -174,11 +174,22 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	// All files are now in tempDir. Proceed to PDF conversion.
 	log.Printf("Starting PDF conversion for files in %s", tempDir)
-	pdfBuffer, err := convertImagesToPDF(tempDir)
+
+	// Set headers before writing to the response writer.
+	// Content-Length cannot be reliably set before generation when streaming.
+	// The browser will use chunked transfer encoding or close the connection when done.
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"converted_images.pdf\"")
+
+	bytesWritten, err := convertImagesToPDF(tempDir, w)
 	if err != nil {
-		log.Printf("Error converting images to PDF: %v", err)
-		// Check if the error is due to no supported images
+		log.Printf("Error converting images to PDF and streaming: %v", err)
+		// Important: If headers are already sent, we can't send a different HTTP error code.
+		// We attempt to send an error, but if `w` has been written to, this might not work as expected.
+		// The client might receive a truncated PDF or a connection error.
 		if strings.Contains(err.Error(), "no supported image files") {
+			// This check might be too late if PDF generation started and failed mid-way.
+			// Consider sending a plain text error if no bytes have been written yet.
 			http.Error(w, "No supported image files (.webp, .jpg, .jpeg, .png) found in the uploaded folder.", http.StatusBadRequest)
 		} else {
 			http.Error(w, "Error generating PDF.", http.StatusInternalServerError)
@@ -186,36 +197,26 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if pdfBuffer == nil || pdfBuffer.Len() == 0 {
-		log.Println("Generated PDF is empty or nil.")
+	if bytesWritten == 0 {
+		log.Println("Generated PDF is empty (0 bytes written).")
+		// If no bytes were written, we can still send an HTTP error.
 		http.Error(w, "Generated PDF is empty.", http.StatusInternalServerError)
 		return
 	}
 
-	log.Printf("PDF generated successfully, size: %d bytes. Sending to client.", pdfBuffer.Len())
-
-	w.Header().Set("Content-Type", "application/pdf")
-	w.Header().Set("Content-Disposition", "attachment; filename=\"converted_images.pdf\"")
-	// Content-Length is useful for clients to show progress
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", pdfBuffer.Len()))
-
-	_, err = io.Copy(w, pdfBuffer)
-	if err != nil {
-		log.Printf("Error sending PDF to client: %v", err)
-		// Client might have aborted the connection, often not a server-side issue to log as fatal
-	} else {
-		log.Println("PDF sent successfully.")
-	}
+	log.Printf("PDF generated and streamed successfully, size: %d bytes.", bytesWritten)
+	// No explicit io.Copy is needed here as convertImagesToPDF now writes directly to w.
+	// The log "PDF sent successfully." is implicit if bytesWritten > 0 and no error occurred.
 }
 
 
 // convertImagesToPDF finds all supported image files, decodes them, and adds them to a PDF.
-// It now returns the PDF bytes or an error.
-func convertImagesToPDF(inputDir string) (*bytes.Buffer, error) {
+// It now writes the PDF directly to an io.Writer.
+func convertImagesToPDF(inputDir string, writer io.Writer) (int64, error) {
 	// 1. Read all files from the input directory
 	files, err := os.ReadDir(inputDir)
 	if err != nil {
-		return nil, fmt.Errorf("could not read directory %s: %w", inputDir, err)
+		return 0, fmt.Errorf("could not read directory %s: %w", inputDir, err)
 	}
 
 	// 2. Filter for supported image files and store their names
@@ -233,7 +234,7 @@ func convertImagesToPDF(inputDir string) (*bytes.Buffer, error) {
 	}
 
 	if len(imageFiles) == 0 {
-		return nil, fmt.Errorf("no supported image files (.webp, .jpg, .jpeg, .png) found in directory %s", inputDir)
+		return 0, fmt.Errorf("no supported image files (.webp, .jpg, .jpeg, .png) found in directory %s", inputDir)
 	}
 
 	// 3. Sort the files alphabetically
@@ -307,40 +308,13 @@ func convertImagesToPDF(inputDir string) (*bytes.Buffer, error) {
 		}
 	}
 
-	// 6. Write the final PDF to a buffer.
-	var pdfBuffer bytes.Buffer
-	// It's important to use WriteTo from gopdf to write to an io.Writer (like bytes.Buffer)
-	// instead of WritePdf which writes to a file path.
-	// If gopdf doesn't have a direct WriteTo for io.Writer, we might need a temporary file
-	// or check if its underlying structure can be written to a buffer.
-	// For now, let's assume we write to a temp file then read it into buffer,
-	// or ideally, gopdf supports writing to io.Writer.
-	// Looking at gopdf docs, it seems it writes to a file path.
-	// So, we will write to a temporary file and then read it into the buffer.
-	// This is not ideal for performance/memory but fits the current library.
-	// A better approach would be a library that writes directly to io.Writer.
-
-	// Create a temporary file for the PDF
-	tempPdfFile, err := os.CreateTemp("", "tempdf-*.pdf")
+	// 6. Write the final PDF directly to the provided io.Writer.
+	n, err := pdf.WriteTo(writer)
 	if err != nil {
-		return nil, fmt.Errorf("could not create temporary PDF file: %w", err)
+		return 0, fmt.Errorf("could not write PDF to writer: %w", err)
 	}
-	defer os.Remove(tempPdfFile.Name()) // Clean up the temp file
 
-	err = pdf.WritePdf(tempPdfFile.Name())
-	if err != nil {
-		return nil, fmt.Errorf("could not save temporary PDF file: %w", tempPdfFile.Name(), err)
-	}
-	tempPdfFile.Close() // Close it so we can read it
-
-	// Read the temporary file into the buffer
-	pdfBytes, err := os.ReadFile(tempPdfFile.Name())
-	if err != nil {
-		return nil, fmt.Errorf("could not read temporary PDF file %s: %w", tempPdfFile.Name(), err)
-	}
-	pdfBuffer.Write(pdfBytes)
-
-	return &pdfBuffer, nil
+	return n, nil
 }
 
 // processImage handles opening, decoding, and converting a single image.
