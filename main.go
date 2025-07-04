@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"github.com/disintegration/imaging" // Added for image conversion
@@ -18,46 +19,73 @@ import (
 	"strings"
 )
 
+// ErrNoSupportedFiles is returned when no supported image files are found in a directory.
+var ErrNoSupportedFiles = errors.New("no supported image files found")
+
+// ProcessedImage holds the data for an image that has been processed (or attempted to be processed).
+type ProcessedImage struct {
+	Index    int         // Original index of the file, for ordering
+	Filename string      // Original filename
+	Image    image.Image // Decoded and processed image, nil if error
+	Error    error       // Error encountered during processing, nil if successful
+}
+
 func main() {
-	// Define command-line flags for input and output paths - REMOVED
 	inputDir := flag.String("i", ".", "Input directory containing image files (.webp, .jpg, .jpeg, .png)")
 	outputFile := flag.String("o", "output.pdf", "Output PDF file name")
 	flag.Parse()
 
-	// Call the main conversion function - REMOVED
 	outFile, err := os.Create(*outputFile)
 	if err != nil {
 		log.Fatalf("❌ Could not create output file: %v", err)
 	}
-	defer func(outFile *os.File) {
-		err = outFile.Close()
-		if err != nil {
-			log.Fatalf("❌ Could not close output file %s: %v", *outputFile, err)
+	// defer outFile.Close() // We will handle closing manually or more conditionally
+
+	hasContent, err := convertImagesToPDF(*inputDir, outFile)
+
+	// Ensure file is closed regardless of outcome, before potential removal
+	if closeErr := outFile.Close(); closeErr != nil {
+		log.Printf("⚠️ Warning: failed to close output file %s: %v", *outputFile, closeErr)
+		// If there was already an error, prioritize reporting that one.
+		// If not, this close error might be the primary issue.
+		if err == nil {
+			err = fmt.Errorf("failed to close output file: %w", closeErr)
 		}
-	}(outFile)
-	err = convertImagesToPDF(*inputDir, outFile)
+	}
+
 	if err != nil {
+		// If no content was generated or the specific error is ErrNoSupportedFiles, remove the created file.
+		if !hasContent || errors.Is(err, ErrNoSupportedFiles) {
+			if removeErr := os.Remove(*outputFile); removeErr != nil {
+				log.Printf("⚠️ Warning: failed to remove empty output file %s: %v", *outputFile, removeErr)
+			}
+		}
 		log.Fatalf("❌ Failed to convert images to PDF: %v", err)
 	}
+
+	if !hasContent {
+		// This case should ideally be caught by an error from convertImagesToPDF if no images were processed.
+		// However, as a safeguard:
+		log.Printf("ℹ️ No images were successfully added to the PDF from '%s'. Output file '%s' removed.", *inputDir, *outputFile)
+		if removeErr := os.Remove(*outputFile); removeErr != nil {
+			log.Printf("⚠️ Warning: failed to remove output file %s after no content: %v", *outputFile, removeErr)
+		}
+		return // Graceful exit
+	}
+
 	fmt.Printf("✅ Successfully created '%s' from images in '%s'\n", *outputFile, *inputDir)
 }
 
-// convertImagesToPDF finds all supported image files, decodes them, and adds them to a PDF.
-// It now writes the PDF directly to an io.Writer.
-func convertImagesToPDF(inputDir string, writer io.Writer) error {
-	// 1. Read all files from the input directory
+// findSupportedImageFiles scans a directory for supported image types and returns a sorted list of filenames.
+func findSupportedImageFiles(inputDir string) ([]string, error) {
 	files, err := os.ReadDir(inputDir)
 	if err != nil {
-		return fmt.Errorf("could not read directory %s: %w", inputDir, err)
+		return nil, fmt.Errorf("could not read directory %s: %w", inputDir, err)
 	}
 
-	// 2. Filter for supported image files and store their names
 	var imageFiles []string
 	supportedExtensions := map[string]bool{
-		".webp": true,
-		".jpg":  true,
-		".jpeg": true,
-		".png":  true,
+		".webp": true, ".jpg": true, ".jpeg": true, ".png": true,
 	}
 	for _, file := range files {
 		if !file.IsDir() && supportedExtensions[strings.ToLower(filepath.Ext(file.Name()))] {
@@ -66,98 +94,95 @@ func convertImagesToPDF(inputDir string, writer io.Writer) error {
 	}
 
 	if len(imageFiles) == 0 {
-		return fmt.Errorf("no supported image files (.webp, .jpg, .jpeg, .png) found in directory %s", inputDir)
+		// Wrap ErrNoSupportedFiles with more context.
+		return nil, fmt.Errorf("%w in directory %s", ErrNoSupportedFiles, inputDir)
 	}
 
-	// 3. Sort the files alphabetically
 	sort.Strings(imageFiles)
-	log.Printf("Found %d image files to convert in %s.\n", len(imageFiles), inputDir)
+	return imageFiles, nil
+}
 
-	// 4. Initialize a new PDF document using gopdf
-	pdf := gopdf.GoPdf{}
-	pdf.Start(gopdf.Config{PageSize: *gopdf.PageSizeA4}) // Default, will be overridden
+// decodeSingleImage handles opening, decoding, and standardizing a single image.
+func decodeSingleImage(inputDir string, filename string, idx int) ProcessedImage {
+	fullPath := filepath.Join(inputDir, filename)
+	// fmt.Printf("Decoding: %s\n", filename) // Moved to main processing loop or remove for less verbosity
 
-	// 5. Process images concurrently and add them to the PDF sequentially.
+	file, err := os.Open(fullPath)
+	if err != nil {
+		return ProcessedImage{Index: idx, Filename: filename, Error: fmt.Errorf("could not open file: %w", err)}
+	}
+	defer file.Close()
 
-	// Define a struct to hold processed image data and its original index for ordering.
-	type ProcessedImage struct {
-		Index    int
-		Filename string
-		Image    image.Image
-		Error    error
+	decodedImg, formatName, err := image.Decode(file)
+	if err != nil {
+		return ProcessedImage{Index: idx, Filename: filename, Error: fmt.Errorf("could not decode image: %w", err)}
 	}
 
-	// Number of concurrent decoders. Let's use a reasonable number, e.g., number of CPUs or a fixed value.
-	// For simplicity, let's use a fixed number like 4. This can be tuned.
-	// runtime.NumCPU() could also be used.
-	maxConcurrentDecoders := 4
+	// Convert 16-bit depth images to 8-bit NRGBA via imaging.Clone
+	// imaging.Clone converts to *image.NRGBA if the source is one of these types.
+	switch decodedImg.(type) {
+	case *image.Gray16, *image.NRGBA64, *image.RGBA64:
+		log.Printf("... Converting 16-bit image %s (format: %s) to 8-bit NRGBA", filename, formatName)
+		decodedImg = imaging.Clone(decodedImg)
+	}
 
-	// Create a channel to send processed image data.
-	// The buffer size is len(imageFiles) to prevent blocking if PDF processing is slow,
-	// though with a semaphore, this might not be strictly necessary if workers block on semaphore.
-	// Let's make it unbuffered and rely on the semaphore for backpressure.
+	// Ensure the image is image.NRGBA (8-bit, compatible with gopdf)
+	// If imaging.Clone already converted it, or if it was already NRGBA, this might be redundant
+	// but draw.Draw is safe.
+	bounds := decodedImg.Bounds()
+	finalImg := image.NewNRGBA(bounds)
+	draw.Draw(finalImg, bounds, decodedImg, bounds.Min, draw.Src)
+
+	return ProcessedImage{Index: idx, Filename: filename, Image: finalImg}
+}
+
+// decodeImagesConcurrently processes a list of image files concurrently.
+func decodeImagesConcurrently(inputDir string, imageFiles []string, maxConcurrentDecoders int) []ProcessedImage {
+	if len(imageFiles) == 0 {
+		return []ProcessedImage{}
+	}
+
 	processedImageChan := make(chan ProcessedImage)
-	// Create a semaphore channel to limit concurrency.
 	semaphoreChan := make(chan struct{}, maxConcurrentDecoders)
 
-	// Launch goroutines to decode images.
 	for i, filename := range imageFiles {
 		go func(idx int, fname string) {
-			semaphoreChan <- struct{}{}        // Acquire a slot
-			defer func() { <-semaphoreChan }() // Release the slot
+			semaphoreChan <- struct{}{}        // Acquire slot
+			defer func() { <-semaphoreChan }() // Release slot
 
-			fullPath := filepath.Join(inputDir, fname)
-			fmt.Printf("Decoding: %s\n", fname)
-
-			file, err := os.Open(fullPath)
-			if err != nil {
-				processedImageChan <- ProcessedImage{Index: idx, Filename: fname, Error: fmt.Errorf("could not open file: %w", err)}
-				return
-			}
-			defer file.Close()
-
-			// Use image.Decode which automatically detects the format.
-			// Ensure necessary image format packages (image/jpeg, image/png, golang.org/x/image/webp) are imported for decoder registration.
-			decodedImg, formatName, err := image.Decode(file) // The second return value is format string, ignored here.
-			if err != nil {
-				processedImageChan <- ProcessedImage{Index: idx, Filename: fname, Error: fmt.Errorf("could not decode image: %w", err)}
-				return
-			}
-
-			// Check for 16-bit depth images and convert them to 8-bit NRGBA
-			switch img := decodedImg.(type) {
-			case *image.Gray16, *image.NRGBA64, *image.RGBA64:
-				log.Printf("... Converting 16-bit image %s (format: %s) to 8-bit NRGBA via imaging.Clone", fname, formatName)
-				decodedImg = imaging.Clone(img) // imaging.Clone should return an *image.NRGBA
-			}
-
-			// Explicitly convert to image.NRGBA to ensure 8-bit depth and compatible color model for gopdf
-			bounds := decodedImg.Bounds()
-			finalImg := image.NewNRGBA(bounds)
-			draw.Draw(finalImg, bounds, decodedImg, bounds.Min, draw.Src)
-
-			processedImageChan <- ProcessedImage{Index: idx, Filename: fname, Image: finalImg}
+			log.Printf("Processing image: %s", fname)
+			processedImageChan <- decodeSingleImage(inputDir, fname, idx)
 		}(i, filename)
 	}
 
-	// Collect results and add to PDF.
-	// We need to store them temporarily to ensure correct order if they arrive out of order.
 	results := make([]ProcessedImage, len(imageFiles))
 	for i := 0; i < len(imageFiles); i++ {
 		res := <-processedImageChan
-		results[res.Index] = res // Store in the correct order using the original index
+		results[res.Index] = res // Store in original order
 	}
 	close(processedImageChan)
-	close(semaphoreChan)
+	close(semaphoreChan) // Close semaphore channel once all goroutines are guaranteed to be done.
 
-	// Now add images to PDF in the original sorted order.
-	for _, res := range results {
+	return results
+}
+
+// generatePDFFromDecodedImages creates a PDF from a slice of processed images.
+func generatePDFFromDecodedImages(writer io.Writer, processedImages []ProcessedImage) (hasContent bool, err error) {
+	hasContent = false
+	pdf := gopdf.GoPdf{}
+	pdf.Start(gopdf.Config{PageSize: *gopdf.PageSizeA4}) // Default, pages will resize
+
+	for _, res := range processedImages {
 		if res.Error != nil {
-			log.Printf("... ⚠️  Error processing %s: %v. Skipping.", res.Filename, res.Error)
+			log.Printf("... ⚠️ Error processing %s: %v. Skipping.", res.Filename, res.Error)
+			continue
+		}
+		if res.Image == nil { // Should not happen if Error is nil, but good check
+			log.Printf("... ⚠️ Image data for %s is nil. Skipping.", res.Filename)
 			continue
 		}
 
-		fmt.Printf("Adding to PDF: %s\n", res.Filename)
+		// fmt.Printf("Adding to PDF: %s\n", res.Filename) // Verbose, consider removing or conditional logging
 		decodedImg := res.Image
 		width := float64(decodedImg.Bounds().Dx())
 		height := float64(decodedImg.Bounds().Dy())
@@ -167,24 +192,73 @@ func convertImagesToPDF(inputDir string, writer io.Writer) error {
 		}
 		pdf.AddPageWithOption(pageOptions)
 
-		err := pdf.ImageFrom(decodedImg, 0, 0, &gopdf.Rect{W: width, H: height})
-		if err != nil {
-			log.Printf("... ⚠️  could not draw image %s on PDF using ImageFrom: %v. Skipping.", res.Filename, err)
-			continue
+		if imgErr := pdf.ImageFrom(decodedImg, 0, 0, &gopdf.Rect{W: width, H: height}); imgErr != nil {
+			log.Printf("... ⚠️ Could not add image %s to PDF: %v. Skipping.", res.Filename, imgErr)
+			continue // Skip this image, try to add others
 		}
+		hasContent = true // At least one image was successfully added
 	}
 
-	// 6. Write the final PDF directly to the provided io.Writer.
-	_, err = pdf.WriteTo(writer)
-	if err != nil {
-		return fmt.Errorf("could not write PDF to writer: %w", err)
+	if !hasContent && len(processedImages) > 0 {
+		// All images resulted in errors or were skipped, but there were images to process.
+		// Return an error if appropriate, or just false for hasContent.
+		// For now, we rely on hasContent=false being returned.
+		// If all images fail, but there are no actual *PDF writing* errors, err will be nil.
+		log.Println("ℹ️ No images were successfully added to the PDF pages.")
 	}
 
-	return nil
+
+	if !hasContent && len(processedImages) == 0 {
+		// This case means findSupportedImageFiles found files, but decodeImagesConcurrently returned an empty slice,
+		// which it shouldn't if imageFiles was not empty. Or generatePDFFromDecodedImages was called with an empty slice.
+		// This should be caught earlier by findSupportedImageFiles returning ErrNoSupportedFiles.
+		// If we reach here with no content and no files attempted, it's unusual.
+		// However, the primary check for empty inputDir is in findSupportedImageFiles.
+		// The main function will also handle hasContent=false if convertImagesToPDF returns it.
+	}
+
+
+	// Only write to PDF if there's actual content to prevent empty PDFs from gopdf if it would create one.
+	// However, gopdf.WriteTo is likely fine with no pages, but our hasContent flag is more explicit.
+	if hasContent {
+		if _, writeErr := pdf.WriteTo(writer); writeErr != nil {
+			return true, fmt.Errorf("could not write PDF to writer: %w", writeErr) // true because content was there before write error
+		}
+	} else if len(processedImages) > 0 {
+		// No content, but images were attempted. This implies all images failed to be added.
+		// We don't return an error here unless pdf.WriteTo itself fails,
+		// but main will check hasContent.
+		log.Println("No content was added to the PDF, so no PDF file will be written.")
+	}
+
+
+	return hasContent, nil
 }
 
-// processImage handles opening, decoding, and converting a single image.
-// It returns the processed image.Image or an error.
+// convertImagesToPDF coordinates finding, decoding, and generating a PDF from images.
+// It returns true if content was successfully written to the PDF.
+func convertImagesToPDF(inputDir string, writer io.Writer) (hasContent bool, err error) {
+	imageFiles, err := findSupportedImageFiles(inputDir)
+	if err != nil {
+		return false, err // This will include the wrapped ErrNoSupportedFiles
+	}
+
+	log.Printf("Found %d image files to convert in %s.", len(imageFiles), inputDir)
+
+	// For now, keep maxConcurrentDecoders as a constant. Could be configurable.
+	const maxConcurrentDecoders = 4
+	processedResultImages := decodeImagesConcurrently(inputDir, imageFiles, maxConcurrentDecoders)
+
+	// Filter out images that had processing errors before sending to PDF generation
+	// This might be redundant if generatePDF handles errors, but can be cleaner.
+	// For now, generatePDFFromDecodedImages handles errors internally by skipping.
+
+	return generatePDFFromDecodedImages(writer, processedResultImages)
+}
+
+// processImage (old function, can be removed or kept if there's a use case for single, non-concurrent processing)
+// For now, its logic has been integrated into decodeSingleImage.
+/*
 func processImage(imagePath string) (image.Image, error) {
 	file, err := os.Open(imagePath)
 	if err != nil {
@@ -197,23 +271,21 @@ func processImage(imagePath string) (image.Image, error) {
 		}
 	}(file)
 
-	// Use image.Decode which automatically detects the format.
 	decodedImg, formatName, err := image.Decode(file)
 	if err != nil {
 		return nil, fmt.Errorf("could not decode image: %w", err)
 	}
 
-	// Check for 16-bit depth images and convert them to 8-bit NRGBA
 	switch img := decodedImg.(type) {
 	case *image.Gray16, *image.NRGBA64, *image.RGBA64:
 		log.Printf("... Converting 16-bit image %s (format: %s) to 8-bit NRGBA via imaging.Clone", filepath.Base(imagePath), formatName)
-		decodedImg = imaging.Clone(img) // imaging.Clone should return an *image.NRGBA
+		decodedImg = imaging.Clone(img)
 	}
 
-	// Explicitly convert to image.NRGBA to ensure 8-bit depth and compatible color model for gopdf
 	bounds := decodedImg.Bounds()
 	finalImg := image.NewNRGBA(bounds)
 	draw.Draw(finalImg, bounds, decodedImg, bounds.Min, draw.Src)
 
 	return finalImg, nil
 }
+*/
