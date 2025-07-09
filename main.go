@@ -5,7 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"github.com/disintegration/imaging" // Added for image conversion
-	"github.com/signintech/gopdf"
+	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	_ "golang.org/x/image/webp" // Added for WebP decoding (register decoder)
 	"image"                     // Added for image manipulation
 	"image/draw"                // Added for explicit conversion to NRGBA
@@ -199,72 +200,144 @@ func decodeImagesConcurrently(inputDir string, imageFiles []string, maxConcurren
 	return results
 }
 
-// generatePDFFromDecodedImages creates a PDF from a slice of processed images.
+// generatePDFFromDecodedImages creates a PDF from a slice of processed images using pdfcpu.
 func generatePDFFromDecodedImages(writer io.Writer, processedImages []ProcessedImage) (hasContent bool, err error) {
 	hasContent = false
-	pdf := gopdf.GoPdf{}
-	pdf.Start(gopdf.Config{PageSize: *gopdf.PageSizeA4}) // Default, pages will resize
+	var imageFilePaths []string
+	var tempFiles []string // Keep track of temporary image files to delete later
+
+	// Create a temporary directory for images
+	tempImageDir, err := os.MkdirTemp("", "pdfcpu-images-")
+	if err != nil {
+		return false, fmt.Errorf("could not create temp directory for images: %w", err)
+	}
+	defer os.RemoveAll(tempImageDir) // Clean up temp image directory
 
 	for _, res := range processedImages {
 		if res.Error != nil {
 			log.Printf("... ⚠️ Error processing %s: %v. Skipping.", res.Filename, res.Error)
 			continue
 		}
-		if res.Image == nil { // Should not happen if Error is nil, but good check
+		if res.Image == nil {
 			log.Printf("... ⚠️ Image data for %s is nil. Skipping.", res.Filename)
 			continue
 		}
 
-		// fmt.Printf("Adding to PDF: %s\n", res.Filename) // Verbose, consider removing or conditional logging
-		decodedImg := res.Image
-		width := float64(decodedImg.Bounds().Dx())
-		height := float64(decodedImg.Bounds().Dy())
-
-		pageOptions := gopdf.PageOption{
-			PageSize: &gopdf.Rect{W: width, H: height},
+		// Save image.Image to a temporary file
+		// Ensure the temporary filename has a supported extension for pdfcpu
+		ext := strings.ToLower(filepath.Ext(res.Filename))
+		if ext == "" || (ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".webp" && ext != ".tif" && ext != ".tiff") {
+			// Default to .png if original extension is unknown or unsupported by direct saving
+			// or if we need to re-encode (e.g. from a generic image.Image)
+			ext = ".png" // pdfcpu supports png, jpg, webp, tiff
 		}
-		pdf.AddPageWithOption(pageOptions)
+		// Use a more robust temp file creation within the dedicated directory
+		tempImageFile, err := os.CreateTemp(tempImageDir, fmt.Sprintf("image-*%s", ext))
 
-		if imgErr := pdf.ImageFrom(decodedImg, 0, 0, &gopdf.Rect{W: width, H: height}); imgErr != nil {
-			log.Printf("... ⚠️ Could not add image %s to PDF: %v. Skipping.", res.Filename, imgErr)
-			continue // Skip this image, try to add others
+		if err != nil {
+			log.Printf("... ⚠️ Could not create temp file for image %s: %v. Skipping.", res.Filename, err)
+			continue
 		}
-		hasContent = true // At least one image was successfully added
-	}
 
-	if !hasContent && len(processedImages) > 0 {
-		// All images resulted in errors or were skipped, but there were images to process.
-		// Return an error if appropriate, or just false for hasContent.
-		// For now, we rely on hasContent=false being returned.
-		// If all images fail, but there are no actual *PDF writing* errors, err will be nil.
-		log.Println("ℹ️ No images were successfully added to the PDF pages.")
-	}
+		// Encode the image to the temporary file
+		// imaging.Save handles various formats based on extension.
+		// We need to ensure the format is one pdfcpu explicitly supports (jpg, png, webp, tiff).
+		// For simplicity, we can standardize on PNG for broadest compatibility from image.Image.
+		// Or, attempt to save in original format if it's supported.
+		// The current `decodeSingleImage` converts to NRGBA. PNG is a good lossless format for NRGBA.
+		// Let's use imaging.Encode which writes to an io.Writer.
 
-
-	if !hasContent && len(processedImages) == 0 {
-		// This case means findSupportedImageFiles found files, but decodeImagesConcurrently returned an empty slice,
-		// which it shouldn't if imageFiles was not empty. Or generatePDFFromDecodedImages was called with an empty slice.
-		// This should be caught earlier by findSupportedImageFiles returning ErrNoSupportedFiles.
-		// If we reach here with no content and no files attempted, it's unusual.
-		// However, the primary check for empty inputDir is in findSupportedImageFiles.
-		// The main function will also handle hasContent=false if convertImagesToPDF returns it.
-	}
-
-
-	// Only write to PDF if there's actual content to prevent empty PDFs from gopdf if it would create one.
-	// However, gopdf.WriteTo is likely fine with no pages, but our hasContent flag is more explicit.
-	if hasContent {
-		if _, writeErr := pdf.WriteTo(writer); writeErr != nil {
-			return true, fmt.Errorf("could not write PDF to writer: %w", writeErr) // true because content was there before write error
+		// We need to decide the format. PNG is a safe bet.
+		// If we want to preserve original format (if supported), more logic is needed.
+		// For now, let's try to save as PNG.
+		err = imaging.Encode(tempImageFile, res.Image, imaging.PNG)
+		if err != nil {
+			tempImageFile.Close() // Close before attempting to remove or logging path
+			log.Printf("... ⚠️ Could not encode image %s to temp file %s: %v. Skipping.", res.Filename, tempImageFile.Name(), err)
+			os.Remove(tempImageFile.Name()) // Clean up failed temp file
+			continue
 		}
-	} else if len(processedImages) > 0 {
-		// No content, but images were attempted. This implies all images failed to be added.
-		// We don't return an error here unless pdf.WriteTo itself fails,
-		// but main will check hasContent.
-		log.Println("No content was added to the PDF, so no PDF file will be written.")
+		tempImageFilePath := tempImageFile.Name()
+		tempImageFile.Close() // Close the file after successful write
+
+		imageFilePaths = append(imageFilePaths, tempImageFilePath)
+		tempFiles = append(tempFiles, tempImageFilePath) // Add to list for deferred cleanup
+		hasContent = true                               // Mark that we have at least one image to process
+	}
+
+	var imageReaders []io.Reader
+	var openedFiles []*os.File // Keep track of opened files to close them
+
+	// This defer func will clean up temporary image files
+	defer func() {
+		for _, fPath := range tempFiles {
+			if err := os.Remove(fPath); err != nil {
+				log.Printf("⚠️ Warning: failed to remove temp image file %s: %v", fPath, err)
+			}
+		}
+	}()
+	// This defer func will close all opened image files
+	defer func() {
+		for _, f := range openedFiles {
+			if f != nil {
+				if err := f.Close(); err != nil {
+					log.Printf("⚠️ Warning: failed to close temp image file %s: %v", f.Name(), err)
+				}
+			}
+		}
+	}()
+
+	if !hasContent || len(imageFilePaths) == 0 {
+		if len(processedImages) > 0 {
+			log.Println("ℹ️ No images were successfully prepared for PDF generation.")
+		}
+		return false, nil // No content to add to PDF
+	}
+
+	// Open each temporary image file for reading
+	for _, fPath := range imageFilePaths {
+		f, err := os.Open(fPath)
+		if err != nil {
+			// This should ideally not happen if files were created successfully, but good to check
+			log.Printf("... ⚠️ Could not open temp image file %s for reading: %v. Skipping.", fPath, err)
+			// Consider if we should abort or try to continue with successfully opened files
+			// For now, let's try to continue, but this image will be skipped.
+			// To prevent ImportImages from processing a partial list if some files fail to open,
+			// we might need to return an error here or ensure all readers are valid.
+			// For simplicity, if one fails to open, we'll return an error for the whole batch.
+			return true, fmt.Errorf("failed to open temporary image file %s for reading: %w", fPath, err)
+		}
+		imageReaders = append(imageReaders, f)
+		openedFiles = append(openedFiles, f)
+	}
+
+	if len(imageReaders) == 0 && hasContent {
+		// This means all images that were saved failed to be opened.
+		log.Println("ℹ️ All prepared images failed to be opened for PDF generation.")
+		return true, errors.New("all prepared images failed to be opened for PDF generation")
 	}
 
 
+	// Configuration for pdfcpu
+	// For default behavior (image size dictates page size), pass nil for ImportConfig.
+	// Pass a default model.Configuration.
+	conf := model.NewDefaultConfiguration()
+	// For default behavior (image size dictates page size), pass nil for the ImportConfig.
+	// The api.ImportImages function expects *pdfcpu.Import for its `imp` parameter.
+	// Examples from pdfcpu (like ImportImagesFile) show that passing `nil` for this
+	// parameter yields default import behavior, which is what we want.
+
+	log.Printf("ℹ️ Importing %d images into PDF via io.Writer", len(imageReaders))
+
+	// api.ImportImages takes (rs io.ReadSeeker, w io.Writer, imgs []io.Reader, imp *pdfcpu.Import, conf *model.Configuration)
+	// Pass `nil` for `imp` for default import settings.
+	if err := api.ImportImages(nil, writer, imageReaders, nil, conf); err != nil {
+		// hasContent is true because we attempted to process images.
+		return true, fmt.Errorf("pdfcpu could not import images: %w", err)
+	}
+
+	// If successful, ImportImages has written directly to the writer.
+	// hasContent was set if any image was successfully saved to a temp file.
 	return hasContent, nil
 }
 
