@@ -75,4 +75,22 @@ This document provides guidelines for AI agents working on this project. The pri
 *   **End-to-End (E2E) Tests (Future)**: As the API matures, E2E tests simulating client interactions would be beneficial.
 *   **Performance Tests**: Use benchmarks to ensure performance targets are met.
 
+### 8. Release Process
+
+*   **Tooling**: This project uses [GoReleaser](https://goreleaser.com/) for building and packaging releases, and [GitHub Actions](https://github.com/features/actions) for automating the release workflow.
+*   **Trigger**: Releases are triggered by pushing a Git tag to the repository that follows semantic versioning, specifically matching the pattern `v*.*.*` (e.g., `v1.0.0`, `v0.2.1`).
+*   **Workflow**: The GitHub Actions workflow is defined in `.github/workflows/release.yml`. When a valid tag is pushed:
+    *   It checks out the code.
+    *   Sets up the Go environment.
+    *   Installs GoReleaser.
+    *   Runs `goreleaser release --clean` which:
+        *   Builds the `manga_to_pdf_server` binary for multiple platforms (Linux, Windows, macOS - amd64, arm64).
+        *   Archives the binary along with `README.md` and `openapi.yaml`.
+        *   Generates a checksum file for the archives.
+        *   Creates a new GitHub Release associated with the tag.
+        *   Uploads the archives and checksum file as assets to the GitHub Release.
+        *   Generates release notes from commit messages (commits like `docs:`, `test:`, `chore:`, and merge commits are excluded).
+*   **Tagging Convention**: Tags MUST follow Semantic Versioning 2.0.0, prefixed with a `v`. For example: `v1.0.0`, `v0.1.0`, `v0.1.1-alpha`.
+*   **Local Testing**: The release process can be tested locally without creating an actual GitHub release by running `goreleaser release --snapshot --clean` from the project root. This will build artifacts into the `dist/` directory.
+
 By adhering to these guidelines, we aim to create a high-quality, maintainable, and efficient API.

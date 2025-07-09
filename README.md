@@ -216,6 +216,44 @@ go tool pprof http://localhost:8080/debug/pprof/heap # Memory profile
 
 For AI development guidelines and project principles, refer to `AGENTS.md`.
 
+## Creating a Release
+
+This project uses [GoReleaser](https://goreleaser.com/) and GitHub Actions to automate the release process.
+
+To create a new release:
+
+1.  **Ensure your `main` branch is up-to-date and all changes for the release are merged.**
+2.  **Tag the commit you want to release.** Tags should follow semantic versioning (e.g., `v1.0.0`, `v0.2.1`).
+    ```bash
+    git tag -a vX.Y.Z -m "Release vX.Y.Z"
+    ```
+    Replace `vX.Y.Z` with the desired version number.
+3.  **Push the tag to GitHub:**
+    ```bash
+    git push origin vX.Y.Z
+    ```
+    Pushing a tag in the format `v*.*.*` will trigger the `Release Go Project` GitHub Actions workflow defined in `.github/workflows/release.yml`. This workflow will:
+    *   Build the `manga_to_pdf_server` binary for Linux, Windows, and macOS (amd64 and arm64 architectures).
+    *   Create archives (ZIP files) containing the binary, `README.md`, and `openapi.yaml`.
+    *   Generate checksums for the archives.
+    *   Create a new GitHub Release with the tag.
+    *   Upload the archives and checksums as release assets.
+    *   Generate release notes based on commit messages since the last tag (excluding docs, test, chore commits, and merge commits).
+
+### Local Release Testing (Dry Run)
+
+You can test the GoReleaser process locally without creating a GitHub release. This is useful for verifying the build and packaging steps.
+
+1.  **Install GoReleaser** (if you haven't already): [GoReleaser Installation](https://goreleaser.com/install/)
+2.  **Run the local release command from the project root:**
+    ```bash
+    goreleaser release --snapshot --clean
+    ```
+    *   `--snapshot`: Builds and archives but doesn't publish. Output will be in the `dist` folder.
+    *   `--clean`: Ensures a clean build by removing the `dist` folder before starting.
+
+This will simulate the release process and place the generated artifacts in a `dist` directory.
+
 ## Future Enhancements
 
 *   Asynchronous processing for long conversions (e.g., using job queues and status endpoints).
