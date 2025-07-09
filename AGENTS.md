@@ -4,10 +4,10 @@ This document provides guidelines for AI agents working on this project. The pri
 
 ### 1. Versioning
 
-*   **API Versioning**: The API will follow Semantic Versioning 2.0.0 (SemVer). Version numbers will be in the format MAJOR.MINOR.PATCH.
-    *   Increment MAJOR version for incompatible API changes.
-    *   Increment MINOR version for adding functionality in a backward-compatible manner.
-    *   Increment PATCH version for backward-compatible bug fixes.
+*   **API Versioning**: The API will follow Semantic Versioning 2.0.0 (SemVer). Version numbers will be in the format `MAJOR.MINOR.PATCH`.
+    *   Increment `MAJOR` version for incompatible API changes.
+    *   Increment `MINOR` version for adding functionality in a backward-compatible manner.
+    *   Increment `PATCH` version for backward-compatible bug fixes.
 *   **Code Versioning**: Use Git for version control. Branch names should be descriptive (e.g., `feature/add-tiff-support`, `fix/pdf-generation-bug`). Commit messages should follow conventional commit formats.
 
 ### 2. Dependency Management
@@ -75,7 +75,7 @@ This document provides guidelines for AI agents working on this project. The pri
 *   **End-to-End (E2E) Tests (Future)**: As the API matures, E2E tests simulating client interactions would be beneficial.
 *   **Performance Tests**: Use benchmarks to ensure performance targets are met.
 
-### 8. CI/CD and Code Quality Tools
+### 8. Code Quality and Continuous Integration (CI)
 
 The project utilizes a GitHub Actions workflow for Continuous Integration. This workflow automates several code quality checks. It's recommended to run these checks locally before committing changes.
 
@@ -96,4 +96,20 @@ The project utilizes a GitHub Actions workflow for Continuous Integration. This 
     *   Always run tests, including race detection.
     *   To run: `go test -race ./...`
 
-By adhering to these guidelines and utilizing the provided tools, we aim to create a high-quality, maintainable, and efficient API.
+### 9. Release Process
+
+*   **Tooling**: This project uses GoReleaser for building and packaging releases, and GitHub Actions for automating the release workflow.
+*   **Trigger**: Releases are triggered by pushing a Git tag to the repository that follows semantic versioning, specifically matching the pattern `v*.*.*` (e.g., `v1.0.0`, `v0.2.1`).
+*   **Workflow**: The GitHub Actions workflow is defined in `.github/workflows/release.yml`. When a valid tag is pushed:
+    *   It checks out the code.
+    *   Sets up the Go environment.
+    *   Installs GoReleaser.
+    *   Runs `goreleaser release --clean` which:
+        *   Builds the `manga_to_pdf_server` binary for multiple platforms (Linux, Windows, macOS - amd64, arm64).
+        *   Archives the binary along with `README.md` and `openapi.yaml`.
+        *   Generates a checksum file for the archives.
+        *   Creates a new GitHub Release associated with the tag.
+        *   Uploads the archives and checksum file as assets to the GitHub Release.
+        *   Generates release notes from commit messages (commits like `docs:`, `test:`, `chore:`, and merge commits are excluded).
+*   **Tagging Convention**: Tags MUST follow Semantic Versioning 2.0.0, prefixed with a `v`. For example: `v1.0.0`, `v0.1.0`, `v0.1.1-alpha`.
+*   **Local Testing**: The release process can be tested locally without creating an actual GitHub release by running `goreleaser release --snapshot --clean` from the project root. This will build artifacts into the `dist/` directory.

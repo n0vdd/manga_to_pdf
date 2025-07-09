@@ -1,0 +1,121 @@
+# .goreleaser.yml
+# For more information see: https://goreleaser.com/customization/
+project_name: manga_to_pdf
+
+# Environment variables to be used in the build process
+env:
+  - GO111MODULE=on
+
+before:
+  hooks:
+    # You may remove this if you don't use go modules.
+    - go mod tidy
+    # you may remove this if you don't need go generate
+    # - go generate ./...
+
+builds:
+  - # Build configuration for the main application
+    id: "manga_to_pdf"
+    # Path to the main Go file or package.
+    main: ./main.go
+    # Binary name (without extension).
+    binary: manga_to_pdf_server
+    # GOOS and GOARCH to build for.
+    # For a complete list of supported GOOS and GOARCH values,
+    # run `go tool dist list`.
+    goos:
+      - linux
+      - windows
+      - darwin # macOS
+    goarch:
+      - amd64
+      - arm64
+    # GOARM to build for (if GOARCH is arm).
+    # goarm:
+    #   - "6"
+    #   - "7"
+    # Custom build flags.
+    # ldflags:
+    #   - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}} -X main.builtBy=goreleaser
+    flags:
+      - -trimpath
+    # Mod timestamp for reproducible builds
+    mod_timestamp: '{{ .CommitTimestamp }}'
+
+archives:
+  - # Archive configuration
+    id: "manga_to_pdf_archives"
+    # Name template for the archive.
+    # Default is `{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}{{ if .Mips }}_{{ .Mips }}{{ end }}`
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # Format of the archive.
+    # Supported formats are `tar.gz`, `zip`, `binary` (no archive).
+    # Default is `tar.gz`.
+    format: zip # Using zip for better Windows compatibility
+    # Files to include in the archive.
+    files:
+      - README.md
+      # - LICENSE # Add a LICENSE file if you have one
+      - openapi.yaml
+      # - config_*.json # If you have default config files to distribute
+
+checksum:
+  # Algorithm to use for checksums.
+  # Supported algorithms are `sha256`, `sha512`, `sha1`, `md5`, `crc32`.
+  # Default is `sha256`.
+  algorithm: sha256
+  # Name template for the checksums file.
+  # Default is `{{ .ProjectName }}_{{ .Version }}_checksums.txt`.
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+
+snapshot:
+  # Name template for snapshot builds.
+  # Default is `{{ .Version }}-SNAPSHOT-{{ .ShortCommit }}`.
+  name_template: "{{ .Tag }}-next"
+
+changelog:
+  # Sort order for changes.
+  # Supported values are `asc`, `desc`.
+  # Default is `asc`.
+  sort: asc
+  # Filters for commit messages.
+  filters:
+    # Exclude commit messages that match the given regular expressions.
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge branch"
+      - "Merge pull request"
+
+# Release configuration for GitHub, GitLab, Gitea.
+# For more information see: https://goreleaser.com/customization/publish/
+release:
+  # If set to true, GoReleaser will not publish the release.
+  # Useful for testing the release process.
+  # Default is false.
+  # draft: true
+
+  # If set to true, will mark the release as a prerelease.
+  # Default is true if the tag is a prerelease (e.g. v1.0.0-rc1).
+  # prerelease: auto
+
+  # You can change the name of the GitHub release.
+  # Default is `{{.Tag}}`
+  name_template: "{{.ProjectName}} {{.Tag}}"
+
+  # Header for the release notes.
+  # header: |
+  #   Release notes for {{.ProjectName}} {{.Tag}}
+
+  # Footer for the release notes.
+  # footer: |
+  #   ---
+  #   Released by GoReleaser
+
+  # If set to true, will append the changelog to the release notes.
+  # Default is true.
+  # disable_changelog_notes: false
+
+# Modelines - code editor hints
+# vim: Codelang=yaml

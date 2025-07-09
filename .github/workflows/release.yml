@@ -1,0 +1,51 @@
+# .github/workflows/release.yml
+name: Release Go Project
+
+on:
+  push:
+    tags:
+      - 'v*.*.*' # Trigger on version tags like v1.0.0, v0.1.2, etc.
+
+permissions:
+  contents: write # Needed to create releases and upload artifacts
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetches all history so GoReleaser can generate a changelog
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21' # Specify your Go version, align with go.mod if possible
+
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@v5
+        with:
+          # either 'goreleaser' (default) or 'goreleaser-pro'
+          distribution: goreleaser
+          version: latest # Or pin to a specific GoReleaser version e.g., v1.20.0
+          args: --clean # Ensure a clean build environment
+
+      - name: Run GoReleaser
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: goreleaser release --clean
+        # The GITHUB_TOKEN is automatically available to the workflow
+        # and GoReleaser uses it to publish releases to GitHub.
+        # The --clean flag ensures that any artifacts from previous builds are removed.
+
+      # Example of how to upload artifacts to the release if not using GoReleaser's built-in upload
+      # - name: Upload Release Assets
+      #   uses: actions/upload-release-asset@v1
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #   with:
+      #     upload_url: ${{ steps.goreleaser.outputs.upload_url }} # This requires GoReleaser action to output the upload URL
+      #     asset_path: ./dist/* # Path to your built artifacts
+      #     asset_name: ${{ github.event.repository.name }}-${{ github.ref_name }}.zip # Example asset name
+      #     asset_content_type: application/zip
