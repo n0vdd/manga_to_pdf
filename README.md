@@ -15,9 +15,9 @@ A command-line utility written in Go to convert a directory of images (WEBP, JPG
 
 The project relies on the following Go packages:
 
-*   `github.com/disintegration/imaging`: For advanced image processing tasks, including resizing and format handling.
-*   `github.com/signintech/gopdf`: For PDF generation.
-*   `golang.org/x/image`: For decoding various image formats (WEBP, PNG, JPEG).
+*   `github.com/disintegration/imaging v1.6.2`: For advanced image processing tasks, including resizing and format handling.
+*   `github.com/jung-kurt/gofpdf v0.0.0-20191119144553-603f56990463`: For PDF generation. (As listed in `go.mod`)
+*   `golang.org/x/image v0.28.0`: For decoding various image formats (WEBP, PNG, JPEG).
 
 ## Installation
 
@@ -109,10 +109,25 @@ Contributions are welcome! If you'd like to contribute, please:
 This project is licensed under the MIT License. See the `LICENSE` file for details.
 *(Note: A `LICENSE` file should be added to the repository if one is chosen. For now, this is a placeholder.)*
 
-## Future Enhancements (Ideas)
+## API Development (In Progress)
+
+A key ongoing effort is to develop a web API for this conversion utility. The goal is to provide endpoints for programmatic access to the image-to-PDF functionality.
+
+**Key API Features (Planned/Under Consideration):**
+
+*   **Endpoint for Conversion**: An endpoint (e.g., `/convert`) that accepts a collection of images (potentially as multipart/form-data or URLs to images) and returns the generated PDF.
+*   **Input Flexibility**: Support for various ways to provide images (e.g., direct upload, links to images).
+*   **Configuration Options**: Allow API clients to specify options similar to the CLI (e.g., output filename, potentially image processing parameters if added in the future).
+*   **Status Reporting**: For long conversions, provide a way to check the status or use asynchronous processing with callbacks/webhooks.
+*   **Authentication**: Plans for simple token-based authentication for API access.
+*   **Documentation**: API will be documented using OpenAPI (Swagger) specifications.
+
+Detailed design principles and guidelines for API development can be found in `AGENTS.md`.
+
+## Future Enhancements (CLI & Core Logic)
 
 *   Add support for more image formats (e.g., TIFF, GIF).
 *   Implement options for PDF compression and quality settings.
 *   Add options for page size, orientation, and margins.
-*   Develop a simple web API for remote conversions (conceptual plan exists, see `AGENTS.md` for initial thoughts).
-*   The application now includes CPU and memory profiling capabilities via command-line flags.
+*   Further performance optimizations for both CLI and upcoming API.
+*   The application now includes CPU and memory profiling capabilities via command-line flags, which will be valuable for API performance tuning.
