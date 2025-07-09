@@ -75,4 +75,25 @@ This document provides guidelines for AI agents working on this project. The pri
 *   **End-to-End (E2E) Tests (Future)**: As the API matures, E2E tests simulating client interactions would be beneficial.
 *   **Performance Tests**: Use benchmarks to ensure performance targets are met.
 
-By adhering to these guidelines, we aim to create a high-quality, maintainable, and efficient API.
+### 8. CI/CD and Code Quality Tools
+
+The project utilizes a GitHub Actions workflow for Continuous Integration. This workflow automates several code quality checks. It's recommended to run these checks locally before committing changes.
+
+*   **Formatting (`gofmt`)**:
+    *   Ensure your code is formatted according to Go standards.
+    *   To check: `gofmt -l .` (should output nothing)
+    *   To format: `gofmt -w .`
+*   **Linting (`golangci-lint`)**:
+    *   This tool runs a suite of linters to catch common issues and enforce coding standards.
+    *   Installation (if not already on your Go path via CI setup): `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`
+    *   To run: `golangci-lint run ./...`
+    *   It's advisable to use the same version as specified in the CI workflow if discrepancies arise.
+*   **Vulnerability Scanning (`govulncheck`)**:
+    *   This tool checks your project's dependencies for known vulnerabilities.
+    *   Installation (if not already on your Go path via CI setup): `go install golang.org/x/vuln/cmd/govulncheck@latest`
+    *   To run: `govulncheck ./...`
+*   **Testing (`go test`)**:
+    *   Always run tests, including race detection.
+    *   To run: `go test -race ./...`
+
+By adhering to these guidelines and utilizing the provided tools, we aim to create a high-quality, maintainable, and efficient API.
