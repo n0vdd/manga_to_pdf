@@ -1,11 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"flag"
 	"fmt"
 	"github.com/disintegration/imaging" // Added for image conversion
-	"github.com/signintech/gopdf"
+	"github.com/jung-kurt/gofpdf"
 	_ "golang.org/x/image/webp" // Added for WebP decoding (register decoder)
 	"image"                     // Added for image manipulation
 	"image/draw"                // Added for explicit conversion to NRGBA
@@ -202,68 +203,86 @@ func decodeImagesConcurrently(inputDir string, imageFiles []string, maxConcurren
 // generatePDFFromDecodedImages creates a PDF from a slice of processed images.
 func generatePDFFromDecodedImages(writer io.Writer, processedImages []ProcessedImage) (hasContent bool, err error) {
 	hasContent = false
-	pdf := gopdf.GoPdf{}
-	pdf.Start(gopdf.Config{PageSize: *gopdf.PageSizeA4}) // Default, pages will resize
+	// Initialize PDF: "P" for portrait, "pt" for points, "A4" is default but we override
+	pdf := gofpdf.New("P", "pt", "A4", "")
+	// pdf.SetErrorTolerance(gofpdf.ContinueOnError) // Or handle errors manually
 
-	for _, res := range processedImages {
+	for i, res := range processedImages {
 		if res.Error != nil {
 			log.Printf("... ⚠️ Error processing %s: %v. Skipping.", res.Filename, res.Error)
 			continue
 		}
-		if res.Image == nil { // Should not happen if Error is nil, but good check
+		if res.Image == nil {
 			log.Printf("... ⚠️ Image data for %s is nil. Skipping.", res.Filename)
 			continue
 		}
 
-		// fmt.Printf("Adding to PDF: %s\n", res.Filename) // Verbose, consider removing or conditional logging
 		decodedImg := res.Image
-		width := float64(decodedImg.Bounds().Dx())
-		height := float64(decodedImg.Bounds().Dy())
+		widthPt := float64(decodedImg.Bounds().Dx())  // Assuming 1 pixel = 1 point for direct mapping
+		heightPt := float64(decodedImg.Bounds().Dy()) // Consider DPI if images have it
 
-		pageOptions := gopdf.PageOption{
-			PageSize: &gopdf.Rect{W: width, H: height},
+		// Add page with specific dimensions of the image
+		// The size unit is "pt" as set in New()
+		pdf.AddPageFormat("P", gofpdf.SizeType{Wd: widthPt, Ht: heightPt})
+		if pdf.Err() {
+			log.Printf("... ⚠️ Could not add page for image %s to PDF: %v. Skipping.", res.Filename, pdf.Error())
+			pdf.ClearError() // Clear error to attempt next image
+			continue
 		}
-		pdf.AddPageWithOption(pageOptions)
 
-		if imgErr := pdf.ImageFrom(decodedImg, 0, 0, &gopdf.Rect{W: width, H: height}); imgErr != nil {
-			log.Printf("... ⚠️ Could not add image %s to PDF: %v. Skipping.", res.Filename, imgErr)
-			continue // Skip this image, try to add others
+		// Register the image. gofpdf needs a name for the image.
+		// We can use the filename or an index. Using index to ensure uniqueness.
+		imageName := fmt.Sprintf("image%d", i)
+
+		// We need to encode the image.Image to a supported format (PNG, JPG) in memory
+		// as gofpdf's RegisterImageOptionsReader takes an io.Reader.
+		// PNG is lossless and generally good quality.
+		var imgBuf bytes.Buffer
+		// Convert to NRGBA if not already, as png.Encode expects it or similar common types.
+		// Our decodeSingleImage already ensures finalImg is NRGBA.
+		if encodeErr := imaging.Encode(&imgBuf, decodedImg, imaging.PNG); encodeErr != nil {
+			log.Printf("... ⚠️ Could not encode image %s to PNG: %v. Skipping.", res.Filename, encodeErr)
+			continue
 		}
-		hasContent = true // At least one image was successfully added
+
+		// Register image from the buffer.
+		// The image type can be "PNG", "JPG", or "GIF".
+		// "" lets gofpdf determine from stream, but specifying is safer.
+		pdf.RegisterImageOptionsReader(imageName, gofpdf.ImageOptions{ImageType: "PNG", ReadDpi: false}, &imgBuf)
+		if pdf.Err() {
+			log.Printf("... ⚠️ Could not register image %s in PDF: %v. Skipping.", res.Filename, pdf.Error())
+			pdf.ClearError()
+			continue
+		}
+
+		// Place the image on the page.
+		// Use width and height of the page (which is sized to the image).
+		// x, y = 0, 0 for top-left corner.
+		// flow = false means absolute positioning.
+		pdf.ImageOptions(imageName, 0, 0, widthPt, heightPt, false, gofpdf.ImageOptions{ImageType: "PNG"}, 0, "")
+		if pdf.Err() {
+			log.Printf("... ⚠️ Could not place image %s on PDF page: %v. Skipping.", res.Filename, pdf.Error())
+			pdf.ClearError()
+			continue
+		}
+		hasContent = true
 	}
 
 	if !hasContent && len(processedImages) > 0 {
-		// All images resulted in errors or were skipped, but there were images to process.
-		// Return an error if appropriate, or just false for hasContent.
-		// For now, we rely on hasContent=false being returned.
-		// If all images fail, but there are no actual *PDF writing* errors, err will be nil.
 		log.Println("ℹ️ No images were successfully added to the PDF pages.")
 	}
 
-
-	if !hasContent && len(processedImages) == 0 {
-		// This case means findSupportedImageFiles found files, but decodeImagesConcurrently returned an empty slice,
-		// which it shouldn't if imageFiles was not empty. Or generatePDFFromDecodedImages was called with an empty slice.
-		// This should be caught earlier by findSupportedImageFiles returning ErrNoSupportedFiles.
-		// If we reach here with no content and no files attempted, it's unusual.
-		// However, the primary check for empty inputDir is in findSupportedImageFiles.
-		// The main function will also handle hasContent=false if convertImagesToPDF returns it.
+	if pdf.Err() { // Check for any accumulated errors before writing
+		return hasContent, fmt.Errorf("error generating PDF structure: %w", pdf.Error())
 	}
 
-
-	// Only write to PDF if there's actual content to prevent empty PDFs from gopdf if it would create one.
-	// However, gopdf.WriteTo is likely fine with no pages, but our hasContent flag is more explicit.
 	if hasContent {
-		if _, writeErr := pdf.WriteTo(writer); writeErr != nil {
-			return true, fmt.Errorf("could not write PDF to writer: %w", writeErr) // true because content was there before write error
+		if err := pdf.Output(writer); err != nil {
+			return true, fmt.Errorf("could not write PDF to writer: %w", err)
 		}
 	} else if len(processedImages) > 0 {
-		// No content, but images were attempted. This implies all images failed to be added.
-		// We don't return an error here unless pdf.WriteTo itself fails,
-		// but main will check hasContent.
 		log.Println("No content was added to the PDF, so no PDF file will be written.")
 	}
-
 
 	return hasContent, nil
 }
