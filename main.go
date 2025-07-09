@@ -15,6 +15,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime" // Added for memory profiling
+	"runtime/pprof" // Added for CPU and memory profiling
 	"sort"
 	"strings"
 )
@@ -33,47 +35,78 @@ type ProcessedImage struct {
 func main() {
 	inputDir := flag.String("i", ".", "Input directory containing image files (.webp, .jpg, .jpeg, .png)")
 	outputFile := flag.String("o", "output.pdf", "Output PDF file name")
+	cpuprofile := flag.String("cpuprofile", "", "Write cpu profile to `file`")
+	memprofile := flag.String("memprofile", "", "Write memory profile to `file`")
 	flag.Parse()
 
-	outFile, err := os.Create(*outputFile)
+	// CPU Profiling
+	if *cpuprofile != "" {
+		f, err := os.Create(*cpuprofile)
+		if err != nil {
+			log.Fatalf("could not create CPU profile: %v", err)
+		}
+		defer f.Close() // Ensure file is closed
+		if err := pprof.StartCPUProfile(f); err != nil {
+			log.Fatalf("could not start CPU profile: %v", err)
+		}
+		defer pprof.StopCPUProfile()
+		log.Printf("ℹ️ CPU profiling enabled, output to %s", *cpuprofile)
+	}
+
+	// Main application logic
+	runApp(*inputDir, *outputFile)
+
+	// Memory Profiling
+	if *memprofile != "" {
+		f, err := os.Create(*memprofile)
+		if err != nil {
+			log.Fatalf("could not create memory profile: %v", err)
+		}
+		defer f.Close() // Ensure file is closed
+		runtime.GC()    // Get up-to-date statistics
+		if err := pprof.WriteHeapProfile(f); err != nil {
+			log.Fatalf("could not write memory profile: %v", err)
+		}
+		log.Printf("ℹ️ Memory profile written to %s", *memprofile)
+	}
+}
+
+// runApp encapsulates the core application logic.
+func runApp(inputDir string, outputFile string) {
+	outFile, err := os.Create(outputFile)
 	if err != nil {
 		log.Fatalf("❌ Could not create output file: %v", err)
 	}
-	// defer outFile.Close() // We will handle closing manually or more conditionally
+	// defer outFile.Close() is handled carefully below
 
-	hasContent, err := convertImagesToPDF(*inputDir, outFile)
+	hasContent, err := convertImagesToPDF(inputDir, outFile)
 
 	// Ensure file is closed regardless of outcome, before potential removal
 	if closeErr := outFile.Close(); closeErr != nil {
-		log.Printf("⚠️ Warning: failed to close output file %s: %v", *outputFile, closeErr)
-		// If there was already an error, prioritize reporting that one.
-		// If not, this close error might be the primary issue.
+		log.Printf("⚠️ Warning: failed to close output file %s: %v", outputFile, closeErr)
 		if err == nil {
 			err = fmt.Errorf("failed to close output file: %w", closeErr)
 		}
 	}
 
 	if err != nil {
-		// If no content was generated or the specific error is ErrNoSupportedFiles, remove the created file.
 		if !hasContent || errors.Is(err, ErrNoSupportedFiles) {
-			if removeErr := os.Remove(*outputFile); removeErr != nil {
-				log.Printf("⚠️ Warning: failed to remove empty output file %s: %v", *outputFile, removeErr)
+			if removeErr := os.Remove(outputFile); removeErr != nil {
+				log.Printf("⚠️ Warning: failed to remove empty output file %s: %v", outputFile, removeErr)
 			}
 		}
 		log.Fatalf("❌ Failed to convert images to PDF: %v", err)
 	}
 
 	if !hasContent {
-		// This case should ideally be caught by an error from convertImagesToPDF if no images were processed.
-		// However, as a safeguard:
-		log.Printf("ℹ️ No images were successfully added to the PDF from '%s'. Output file '%s' removed.", *inputDir, *outputFile)
-		if removeErr := os.Remove(*outputFile); removeErr != nil {
-			log.Printf("⚠️ Warning: failed to remove output file %s after no content: %v", *outputFile, removeErr)
+		log.Printf("ℹ️ No images were successfully added to the PDF from '%s'. Output file '%s' removed.", inputDir, outputFile)
+		if removeErr := os.Remove(outputFile); removeErr != nil {
+			log.Printf("⚠️ Warning: failed to remove output file %s after no content: %v", outputFile, removeErr)
 		}
 		return // Graceful exit
 	}
 
-	fmt.Printf("✅ Successfully created '%s' from images in '%s'\n", *outputFile, *inputDir)
+	fmt.Printf("✅ Successfully created '%s' from images in '%s'\n", outputFile, inputDir)
 }
 
 // findSupportedImageFiles scans a directory for supported image types and returns a sorted list of filenames.
