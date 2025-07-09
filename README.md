@@ -1,133 +1,183 @@
-# Manga/Image to PDF Converter (Go)
+# Image to PDF Conversion API (Go)
 
-A command-line utility written in Go to convert a directory of images (WEBP, JPG, PNG) into a single PDF document. This tool is particularly useful for archiving image sequences, such as manga chapters or scanned documents.
+A web API service written in Go to convert a collection of images (WEBP, JPG, PNG) into a single PDF document. This service is useful for applications requiring programmatic PDF generation from images.
 
 ## Features
 
-*   **Supported Formats**: Converts WEBP, JPG/JPEG, and PNG images.
-*   **Image Sorting**: Images are sorted alphanumerically by filename before being added to the PDF, ensuring correct order.
-*   **Image Processing**: Handles 16-bit depth images by converting them to 8-bit NRGBA for compatibility with PDF generation.
-*   **Concurrent Processing**: Decodes and processes multiple images concurrently to potentially speed up the conversion process, especially for a large number of files.
-*   **Customizable Output**: Allows users to specify the input directory containing the images and the desired output filename for the PDF.
-*   **Error Handling**: Provides feedback on processing errors, skips problematic images, and attempts to create a PDF with successfully processed images.
+*   **API-First Design**: Provides HTTP endpoints for image to PDF conversion.
+*   **Supported Input Formats**: Accepts WEBP, JPG/JPEG, and PNG images.
+    *   Images can be provided as direct file uploads (`multipart/form-data`).
+    *   Images can be provided as URLs (API server fetches the images).
+*   **Flexible Configuration**: API clients can specify:
+    *   Output PDF filename.
+    *   JPEG quality for WEBP conversions or re-encoding.
+    *   Number of concurrent image processing workers.
+*   **Image Ordering**: Images are added to the PDF in the order they are provided (uploaded files first, then URL-sourced files by their order in the input array).
+*   **Image Processing**: Handles 16-bit depth WebP images by converting them to 8-bit for PDF compatibility.
+*   **Concurrent Processing**: Decodes and processes multiple images concurrently to speed up conversion.
+*   **OpenAPI Documentation**: API is documented using OpenAPI 3.0 (see `openapi.yaml`).
+*   **Graceful Shutdown**: The server supports graceful shutdown on interrupt signals.
 
 ## Dependencies
 
-The project relies on the following Go packages:
+The project relies on the following Go packages (see `go.mod` for versions):
 
-*   `github.com/disintegration/imaging v1.6.2`: For advanced image processing tasks, including resizing and format handling.
-*   `github.com/jung-kurt/gofpdf v0.0.0-20191119144553-603f56990463`: For PDF generation. (As listed in `go.mod`)
-*   `golang.org/x/image v0.28.0`: For decoding various image formats (WEBP, PNG, JPEG).
+*   `github.com/disintegration/imaging`: For advanced image processing tasks.
+*   `github.com/jung-kurt/gofpdf`: For PDF generation.
+*   `golang.org/x/image`: For decoding various image formats (WEBP, PNG, JPEG).
 
-## Installation
+## Getting Started
 
-### Option 1: Using `go install` (Recommended for users)
+### Prerequisites
 
-If the repository is public and you have Go installed:
-```bash
-go install github.com/your-username/manga_to_pdf@latest
-# Ensure your GOPATH/bin or GOBIN is in your system's PATH
-# Then you can run: manga_to_pdf -i ...
-```
-*(Replace `github.com/your-username/manga_to_pdf` with the actual repository path once it's hosted.)*
+*   Go (version 1.21 or newer recommended).
+*   Git.
 
-### Option 2: Building from Source (Recommended for developers)
+### Installation & Running
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/your-username/manga_to_pdf.git
-    cd manga_to_pdf
+    git clone <repository-url>
+    cd image-to-pdf-api # Or your repository directory name
     ```
-    *(Replace `https://github.com/your-username/manga_to_pdf.git` with the actual repository URL.)*
 
 2.  **Build the executable:**
     ```bash
-    go build
+    go build -o image_to_pdf_server
     ```
-    This will create an executable named `manga_to_pdf` (or `manga_to_pdf.exe` on Windows) in the project directory.
+    This will create an executable named `image_to_pdf_server`.
 
-## Usage
+3.  **Run the server:**
+    ```bash
+    ./image_to_pdf_server
+    ```
+    By default, the server listens on port `8080`.
 
-Run the compiled executable from your terminal, specifying the input directory and output file:
+### Configuration (Environment Variables)
+
+The server can be configured using the following environment variables:
+
+*   `LISTEN_ADDRESS`: The address and port for the server to listen on. Defaults to `:8080`.
+    *   Example: `LISTEN_ADDRESS=":8888"`
+*   `VERBOSE_LOGGING`: Set to `true` or `1` to enable verbose (debug level) logging. Defaults to `false` (info level).
+    *   Example: `VERBOSE_LOGGING="true"`
+
+## API Usage
+
+Refer to the `openapi.yaml` specification for detailed API documentation. You can use tools like Swagger Editor or ReDoc to view this specification.
+
+### Main Endpoint: `POST /convert`
+
+This endpoint converts images to a PDF.
+
+*   **Request `Content-Type`**: `multipart/form-data`
+*   **Form Fields**:
+    *   `images` (optional): One or more image files. Use the same field name for multiple files (e.g., `images` for each file part).
+    *   `image_urls` (optional): A JSON string array of image URLs.
+        *   Example: `'["http://example.com/image1.jpg", "http://example.com/image2.png"]'`
+    *   `config` (optional): A JSON string object with configuration options:
+        *   `output_filename` (string): Suggested name for the PDF file.
+        *   `jpeg_quality` (int, 1-100): Quality for JPEG encoding (default: 90).
+        *   `num_workers` (int): Number of concurrent workers (default: number of CPUs).
+        *   Example: `'{"output_filename": "report.pdf", "jpeg_quality": 80}'`
+
+*   **Successful Response (200 OK)**:
+    *   `Content-Type`: `application/pdf`
+    *   `Content-Disposition`: `attachment; filename="<your_output_filename.pdf>"`
+    *   Body: The binary PDF data.
+
+*   **Error Responses**:
+    *   `400 Bad Request`: Invalid input (e.g., malformed JSON, missing images).
+    *   `422 Unprocessable Entity`: Error during image processing or fetching.
+    *   `500 Internal Server Error`: Unexpected server error.
+    *   Error responses are in JSON format: `{"error": "message", "details": "..."}`.
+
+#### Example using `curl`:
+
+**1. Uploading files:**
 
 ```bash
-./manga_to_pdf -i /path/to/your/images -o my_document.pdf
+curl -X POST \
+  -F "images=@/path/to/your/image1.jpg" \
+  -F "images=@/path/to/your/image2.png" \
+  -F "config={\"output_filename\":\"my_document.pdf\"}" \
+  http://localhost:8080/convert \
+  -o my_document.pdf
 ```
 
-Or, if installed via `go install`:
+**2. Using image URLs:**
+
 ```bash
-manga_to_pdf -i /path/to/your/images -o my_document.pdf
+curl -X POST \
+  -F "image_urls=[\"https://www.google.com/images/branding/googlelogo/1x/googlelogo_light_color_272x92dp.png\"]" \
+  -F "config={\"output_filename\":\"from_url.pdf\", \"jpeg_quality\": 95}" \
+  http://localhost:8080/convert \
+  -o from_url.pdf
 ```
 
-### Command-Line Flags:
+**3. Combination of upload and URLs:**
 
-*   `-i <directory>`: Specifies the input directory containing the image files. Defaults to the current directory (`.`).
-*   `-o <filename>`: Specifies the name of the output PDF file. Defaults to `output.pdf`.
-*   `-cpuprofile <file>`: Write CPU profile to the specified `file`.
-*   `-memprofile <file>`: Write memory profile to the specified `file`.
-
-**Example:**
-
-To convert images from a folder named `manga_chapter_1` into a PDF named `chapter1.pdf`:
 ```bash
-./manga_to_pdf -i ./manga_chapter_1 -o chapter1.pdf
+curl -X POST \
+  -F "images=@/path/to/local_image.webp" \
+  -F "image_urls=[\"https_example_com_remote_image.jpg\"]" \ # Replace with actual URL
+  -F "config={\"output_filename\":\"combined.pdf\"}" \
+  http://localhost:8080/convert \
+  -o combined.pdf
 ```
+
+### Health Check Endpoint: `GET /health`
+
+*   Returns `{"status":"ok"}` with a `200 OK` status if the service is healthy.
+
+## Development
+
+### Building
+```bash
+go build -o image_to_pdf_server
+```
+
+### Running Tests
+```bash
+go test ./...
+```
+This will run all unit and integration tests. Some tests in `api/handlers_test.go` and `internal/converter/converter_test.go` might produce more meaningful results or pass specific scenarios if small, valid `test.jpg`, `test.png`, and `test.webp` files are placed in their respective `testdata` directories (`api/testdata` and `internal/converter/testdata`). Dummy text files are used as fallbacks for basic flow testing.
 
 ### Profiling
 
-To analyze performance, you can generate CPU or memory profiles:
+The previous CLI version had flags for CPU and memory profiling. For the API server, Go's standard `net/http/pprof` can be integrated if needed. Uncomment the pprof routes in `main.go` and import `net/http/pprof`.
 
-*   **CPU Profiling**:
-    ```bash
-    ./manga_to_pdf -i <input_dir> -o <output_file> -cpuprofile cpu.pprof
-    # Then analyze with:
-    go tool pprof cpu.pprof
-    ```
+Example (after enabling in `main.go`):
+```bash
+# In one terminal: ./image_to_pdf_server
+# In another terminal:
+go tool pprof http://localhost:8080/debug/pprof/profile?seconds=30 # CPU profile
+go tool pprof http://localhost:8080/debug/pprof/heap # Memory profile
+```
 
-*   **Memory Profiling**:
-    ```bash
-    ./manga_to_pdf -i <input_dir> -o <output_file> -memprofile mem.pprof
-    # Then analyze with:
-    go tool pprof mem.pprof
-    ```
-    Refer to the Go documentation (`go tool pprof -help`) for more information on using the pprof tool.
+## AGENTS.md
+
+For AI development guidelines and project principles, refer to `AGENTS.md`.
+
+## Future Enhancements
+
+*   Asynchronous processing for long conversions (e.g., using job queues and status endpoints).
+*   Support for more image formats (e.g., TIFF, GIF).
+*   More advanced PDF options (compression, page size, orientation, margins).
+*   Authentication/Authorization for API access.
+*   Rate limiting.
 
 ## Contributing
 
-Contributions are welcome! If you'd like to contribute, please:
+Contributions are welcome! Please follow standard practices:
 
 1.  Fork the repository.
-2.  Create a new branch for your feature or bug fix (`git checkout -b feature/your-feature-name`).
+2.  Create a feature branch.
 3.  Make your changes.
-4.  Ensure your code is formatted with `go fmt` and passes `go vet`.
-5.  Commit your changes (`git commit -am 'Add some feature'`).
-6.  Push to the branch (`git push origin feature/your-feature-name`).
-7.  Create a new Pull Request.
+4.  Ensure code is formatted (`go fmt`) and passes `go vet` and all tests.
+5.  Commit your changes and push to your branch.
+6.  Create a Pull Request.
 
 ## License
 
-This project is licensed under the MIT License. See the `LICENSE` file for details.
-*(Note: A `LICENSE` file should be added to the repository if one is chosen. For now, this is a placeholder.)*
-
-## API Development (In Progress)
-
-A key ongoing effort is to develop a web API for this conversion utility. The goal is to provide endpoints for programmatic access to the image-to-PDF functionality.
-
-**Key API Features (Planned/Under Consideration):**
-
-*   **Endpoint for Conversion**: An endpoint (e.g., `/convert`) that accepts a collection of images (potentially as multipart/form-data or URLs to images) and returns the generated PDF.
-*   **Input Flexibility**: Support for various ways to provide images (e.g., direct upload, links to images).
-*   **Configuration Options**: Allow API clients to specify options similar to the CLI (e.g., output filename, potentially image processing parameters if added in the future).
-*   **Status Reporting**: For long conversions, provide a way to check the status or use asynchronous processing with callbacks/webhooks.
-*   **Authentication**: Plans for simple token-based authentication for API access.
-*   **Documentation**: API will be documented using OpenAPI (Swagger) specifications.
-
-Detailed design principles and guidelines for API development can be found in `AGENTS.md`.
-
-## Future Enhancements (CLI & Core Logic)
-
-*   Add support for more image formats (e.g., TIFF, GIF).
-*   Implement options for PDF compression and quality settings.
-*   Add options for page size, orientation, and margins.
-*   Further performance optimizations for both CLI and upcoming API.
-*   The application now includes CPU and memory profiling capabilities via command-line flags, which will be valuable for API performance tuning.
+This project is assumed to be under a common open-source license like MIT or Apache 2.0. Please add a `LICENSE` file if one is chosen.

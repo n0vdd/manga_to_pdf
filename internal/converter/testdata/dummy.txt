@@ -1,0 +1,2 @@
+This is a dummy file for testing purposes.
+It is not a valid image.
