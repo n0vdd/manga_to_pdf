@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	"image/draw" // Added for explicit conversion to NRGBA
 	_ "image/jpeg" // Added for JPEG decoding (register decoder)
 	_ "image/png"  // Added for PNG encoding (register decoder)
 	"io"
@@ -37,26 +36,25 @@ var ErrNoSupportedImages = errors.New("no supported images were successfully pro
 // ErrUnsupportedContentType is returned when an image URL points to an unsupported content type.
 var ErrUnsupportedContentType = errors.New("unsupported content type from URL")
 
-
 // ImageSource represents a single image to be processed.
 // It can be an uploaded file (via io.ReadCloser) or a URL (string).
 type ImageSource struct {
-	OriginalFilename string       // Original filename from upload or derived from URL
+	OriginalFilename string        // Original filename from upload or derived from URL
 	Reader           io.ReadCloser // Reader for the image data
-	URL              string       // URL if the image is to be fetched
-	ContentType      string       // Detected content type (e.g., "image/jpeg", "image/png", "image/webp")
-	Index            int          // Original index for ordering
+	URL              string        // URL if the image is to be fetched
+	ContentType      string        // Detected content type (e.g., "image/jpeg", "image/png", "image/webp")
+	Index            int           // Original index for ordering
 }
 
 // ProcessedImage holds the data for an image that has been processed and is ready for PDF registration.
 type ProcessedImage struct {
-	Index           int    // Original index of the file, for ordering
-	OriginalFilename string // Original filename
-	Error           error  // Error encountered during processing
-	Reader          io.Reader // Reader for image data (either *os.File or *bytes.Buffer)
-	Width           float64   // Width of the image in points
-	Height          float64   // Height of the image in points
-	ImageTypeForPDF string    // Type string for gofpdf ("PNG", "JPG")
+	Index            int       // Original index of the file, for ordering
+	OriginalFilename string    // Original filename
+	Error            error     // Error encountered during processing
+	Reader           io.Reader // Reader for image data (either *os.File or *bytes.Buffer)
+	Width            float64   // Width of the image in points
+	Height           float64   // Height of the image in points
+	ImageTypeForPDF  string    // Type string for gofpdf ("PNG", "JPG")
 }
 
 // Config holds configuration for the conversion process.
@@ -174,7 +172,7 @@ func processSingleImage(ctx context.Context, cfg *Config, source ImageSource) Pr
 			return processedInfo
 		case "webp":
 			imageTypeForPDF = "JPG" // WebP will be converted to JPG for PDF
-			needsReEncoding = true // It's decoded, but needs re-encoding to JPG
+			needsReEncoding = true  // It's decoded, but needs re-encoding to JPG
 		default:
 			processedInfo.Error = fmt.Errorf("unsupported image format '%s' for %s (content type: %s)", detectedFormat, source.OriginalFilename, source.ContentType)
 			return processedInfo
@@ -218,7 +216,6 @@ func processSingleImage(ctx context.Context, cfg *Config, source ImageSource) Pr
 		processedInfo.Error = fmt.Errorf("internal error processing image %s with detected format %s", source.OriginalFilename, formatName)
 		return processedInfo
 	}
-
 
 	// Standard path for known content types (JPG, PNG, WebP)
 	if !needsReEncoding { // JPG or PNG
@@ -278,7 +275,6 @@ func processSingleImage(ctx context.Context, cfg *Config, source ImageSource) Pr
 	slog.Debug("Successfully processed image", "filename", source.OriginalFilename, "originalFormat", formatName, "pdfType", imageTypeForPDF, "width", processedInfo.Width, "height", processedInfo.Height)
 	return processedInfo
 }
-
 
 // processImagesConcurrently processes a list of ImageSource concurrently.
 func processImagesConcurrently(ctx context.Context, cfg *Config, imageSources []ImageSource) []ProcessedImage {
@@ -393,13 +389,13 @@ endGoroutineLoop:
 
 	// Ensure all results slots are filled, especially if cancellation happened early
 	if ctx.Err() != nil {
-		for i, src := range imageSources {
+		for _, src := range imageSources {
 			// Check if the result for this index was not set or was set but then processing was cancelled
 			// If results[src.Index] is still the initial placeholder or has no error yet.
 			// src.Index should be the correct one.
-			if src.Index >=0 && src.Index < len(results) && (results[src.Index].Index == -1 || results[src.Index].OriginalFilename == "" ) {
+			if src.Index >= 0 && src.Index < len(results) && (results[src.Index].Index == -1 || results[src.Index].OriginalFilename == "") {
 				results[src.Index] = ProcessedImage{Index: src.Index, OriginalFilename: src.OriginalFilename, Error: ctx.Err()}
-			} else if src.Index >=0 && src.Index < len(results) && results[src.Index].Error == nil {
+			} else if src.Index >= 0 && src.Index < len(results) && results[src.Index].Error == nil {
 				// If it was processed but context cancelled during collection, ensure error is set
 				results[src.Index].Error = ctx.Err()
 				// Clean up associated reader if it exists and is not already closed
@@ -413,11 +409,9 @@ endGoroutineLoop:
 		}
 	}
 
-
 	slog.Debug("Finished collecting image processing results.")
 	return results
 }
-
 
 // generatePDFFromProcessedImages generates a PDF from a slice of ProcessedImage.
 // The writer `w` is where the PDF output will be written.
@@ -478,7 +472,6 @@ func generatePDFFromProcessedImages(ctx context.Context, writer io.Writer, proce
 				rc.Close()
 			}
 		}(readerToClean)
-
 
 		pdf.AddPageFormat("P", gofpdf.SizeType{Wd: res.Width, Ht: res.Height})
 		if pdf.Err() {
@@ -603,7 +596,6 @@ func ConvertToPDF(ctx context.Context, sources []ImageSource, cfg *Config, write
 		}
 	}
 
-
 	select {
 	case <-ctx.Done():
 		slog.Info("Cancellation detected before PDF generation phase in ConvertToPDF.")
@@ -721,7 +713,6 @@ func FetchImage(ctx context.Context, imageURL string, index int) (ImageSource, e
 	if parseErr == nil {
 		filename = filepath.Base(parsedURL.Path)
 	}
-
 
 	return ImageSource{
 		OriginalFilename: filename,
