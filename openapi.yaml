@@ -1,0 +1,197 @@
+openapi: 3.0.0
+info:
+  title: Image to PDF Conversion API
+  version: "1.0.0"
+  description: |-
+    An API for converting a collection of images (from uploads or URLs) into a single PDF document.
+    The API supports various image formats and provides configuration options for the conversion process.
+servers:
+  - url: http://localhost:8080 # Default local server
+    description: Local development server
+  # Add other environments like staging or production here if applicable
+  # - url: https://api.example.com/v1
+  #   description: Production server
+
+components:
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: A human-readable error message.
+          example: "Invalid 'config' JSON"
+        details:
+          type: string # Can be an object or array too for more complex errors
+          description: Optional further details about the error.
+          example: "unexpected end of JSON input"
+      required:
+        - error
+
+    ConversionConfig:
+      type: object
+      properties:
+        output_filename:
+          type: string
+          description: Suggested filename for the output PDF. If not provided, a default will be used (e.g., 'converted.pdf'). The Content-Disposition header will use this name.
+          example: "my_manga_chapter.pdf"
+        jpeg_quality:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 100
+          default: 90
+          description: JPEG quality setting for WEBP to JPG conversion and for JPG re-encoding if necessary (1-100).
+          example: 85
+        num_workers:
+          type: integer
+          format: int32
+          minimum: 1
+          description: Number of concurrent workers for image processing. Defaults to the number of CPU cores.
+          example: 4
+      # Add other future configuration parameters here
+
+  requestBodies:
+    ConversionRequest:
+      description: Request body for image to PDF conversion.
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            properties:
+              images:
+                type: array
+                items:
+                  type: string
+                  format: binary
+                description: Image files to be included in the PDF. Max total payload size for multipart/form-data is server-dependent (e.g., 32MB).
+              image_urls:
+                type: string # Represented as a JSON string array in the form data
+                format: json # This is a hint; actual validation is of the string content
+                description: A JSON-encoded array of strings, where each string is a URL to an image. E.g., '["http://example.com/image1.jpg", "http://example.com/image2.png"]'.
+                example: '["https://cdn.pixabay.com/photo/2015/04/23/22/00/tree-736885_1280.jpg"]'
+              config:
+                type: string # Represented as a JSON string object in the form data
+                format: json # Hint for JSON structure
+                description: A JSON-encoded object containing configuration options. See '#/components/schemas/ConversionConfig'.
+                example: '{"output_filename": "custom_name.pdf", "jpeg_quality": 75}'
+          encoding: # Specify encoding for parts if necessary, though defaults are usually fine
+            images:
+              contentType: image/jpeg, image/png, image/webp # Common types, server will attempt to process based on actual data too
+            # No special encoding needed for image_urls or config as they are strings
+
+paths:
+  /convert:
+    post:
+      summary: Convert images to PDF
+      description: |-
+        Uploads image files and/or provides image URLs to convert them into a single PDF document.
+        The order of images in the PDF is determined by:
+        1. The order of 'images' file parts in the multipart request.
+        2. Followed by the order of URLs in the 'image_urls' JSON array.
+      operationId: convertImagesToPdf
+      requestBody:
+        $ref: '#/components/requestBodies/ConversionRequest'
+      responses:
+        '200':
+          description: PDF generated successfully. The PDF is returned as a binary stream.
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Content-Disposition:
+              description: Suggests a filename for the downloaded PDF (e.g., 'attachment; filename="converted.pdf"').
+              schema:
+                type: string
+                example: 'attachment; filename="my_document.pdf"'
+            Content-Length:
+              description: The size of the PDF body in bytes.
+              schema:
+                type: integer
+        '400':
+          description: Bad Request. Invalid input, such as malformed JSON, missing required fields, or issues with request structure.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalidJson:
+                  summary: Invalid JSON in config
+                  value:
+                    error: "Invalid 'config' JSON"
+                    details: "unexpected character '}' looking for beginning of object key string"
+                noImages:
+                  summary: No images provided
+                  value:
+                    error: "No images provided"
+                    details: "Please upload files or provide image URLs."
+        '422':
+          description: Unprocessable Entity. Images could not be processed, e.g., unsupported image format, corrupted image, URL inaccessible or points to non-image content.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                imageProcessingError:
+                  summary: Error processing an image
+                  value:
+                    error: "No images could be processed into the PDF"
+                    details: "no supported images were successfully processed"
+                unsupportedContentType:
+                  summary: URL points to non-image
+                  value:
+                    error: "Unsupported image content type from URL"
+                    details: "unsupported content type from URL: text/html; charset=utf-8 from http://example.com/not_an_image"
+        '500':
+          description: Internal Server Error. An unexpected error occurred on the server.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                serverError:
+                  summary: Generic server error
+                  value:
+                    error: "Failed to convert images to PDF"
+                    details: "An internal error occurred."
+  /health:
+    get:
+      summary: Health Check
+      description: Provides a simple health check for the service.
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Service is healthy.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+        '503':
+          description: Service Unavailable. The service is not healthy.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: unavailable
+                  # Optionally, include more details about the unhealthy state
+                  # details:
+                  #   type: string
+                  #   example: "Database connection lost"
+# You can add securitySchemes and security sections here if authentication is added later.
+# securitySchemes:
+#   ApiKeyAuth:
+#     type: apiKey
+#     in: header
+#     name: X-API-KEY
+# security:
+#   - ApiKeyAuth: []
