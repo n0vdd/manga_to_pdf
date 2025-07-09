@@ -1,6 +1,17 @@
 # Image to PDF Conversion API (Go)
 
+[![Go CI](https://github.com/YOUR_USERNAME/YOUR_REPONAME/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/YOUR_REPONAME/actions/workflows/ci.yml)
+
 A web API service written in Go to convert a collection of images (WEBP, JPG, PNG) into a single PDF document. This service is useful for applications requiring programmatic PDF generation from images.
+
+## CI/CD
+
+This project uses GitHub Actions for Continuous Integration. The workflow performs the following checks on every push and pull request to the `main` branch:
+- **Code Formatting**: Ensures code is formatted with `gofmt`.
+- **Linting**: Uses `golangci-lint` for static analysis.
+- **Vulnerability Scanning**: Employs `govulncheck` to detect known vulnerabilities.
+- **Testing**: Runs unit tests with race detection using `go test -race ./...`.
+- **Build**: Compiles the project using `go build -v ./...`.
 
 ## Features
 
