@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -709,7 +710,7 @@ func FetchImage(ctx context.Context, imageURL string, index int) (ImageSource, e
 
 	// Try to get a filename from URL
 	filename := filepath.Base(imageURL)
-	parsedURL, parseErr := http.ParseRequestURI(imageURL)
+	parsedURL, parseErr := url.ParseRequestURI(imageURL)
 	if parseErr == nil {
 		filename = filepath.Base(parsedURL.Path)
 	}

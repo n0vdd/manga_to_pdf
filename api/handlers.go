@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"mime/multipart"
 	"net/http"
 	"sort"
 	"strconv"
@@ -99,7 +99,6 @@ func HandleConvert(w http.ResponseWriter, r *http.Request) {
 	} else {
 		slog.Debug("No 'config' provided, using default config")
 	}
-
 
 	var imageSources []converter.ImageSource
 	var sourceIndex int // To maintain original order
@@ -237,7 +236,6 @@ func HandleConvert(w http.ResponseWriter, r *http.Request) {
 	imageSources = append(imageSources, fetchedSources...)
 	slog.Debug("Finished processing image_urls", "successfully_fetched_count", len(fetchedSources))
 
-
 	// --- Final Check and Cleanup ---
 	if len(imageSources) == 0 {
 		slog.Info("No image files or URLs provided or successfully processed up to this point.")
@@ -254,7 +252,6 @@ func HandleConvert(w http.ResponseWriter, r *http.Request) {
 	for idx, src := range imageSources {
 		slog.Debug("Source for conversion", "final_list_index", idx, "original_index", src.Index, "filename", src.OriginalFilename, "has_reader", src.Reader != nil, "url", src.URL)
 	}
-
 
 	// --- Conversion ---
 	var pdfOutputBuffer bytes.Buffer
@@ -295,7 +292,6 @@ func HandleConvert(w http.ResponseWriter, r *http.Request) {
 		outputFilename += ".pdf"
 	}
 
-
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, outputFilename))
 	contentLength := pdfOutputBuffer.Len()
@@ -308,5 +304,3 @@ func HandleConvert(w http.ResponseWriter, r *http.Request) {
 		// Cannot send JSON error here as headers are already sent.
 	}
 }
-
-[end of api/handlers.go]
