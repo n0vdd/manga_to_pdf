@@ -94,37 +94,94 @@ This endpoint converts images to a PDF.
 
 #### Example using `curl`:
 
-**1. Uploading files:**
+**Note on providing JSON data (for `config` and `image_urls`):**
+The examples below demonstrate a robust method for providing JSON data to `curl`, especially on Windows with PowerShell, by reading the JSON content from temporary files. This avoids complex shell quoting and escaping issues.
 
-```bash
-curl -X POST \
-  -F "images=@/path/to/your/image1.jpg" \
-  -F "images=@/path/to/your/image2.png" \
-  -F "config={\"output_filename\":\"my_document.pdf\"}" \
-  http://localhost:8080/convert \
-  -o my_document.pdf
-```
+**1. Uploading local files:**
+
+*   First, create a file named `config_doc.json` (or similar) with your desired configuration, for example:
+    ```json
+    {"output_filename":"my_document.pdf"}
+    ```
+*   Then, run `curl`:
+    ```bash
+    # On Linux/macOS or Git Bash on Windows:
+    curl -X POST \
+      -F "images=@/path/to/your/image1.jpg" \
+      -F "images=@/path/to/your/image2.png" \
+      -F "config=<config_doc.json" \
+      http://localhost:8080/convert \
+      -o my_document.pdf
+
+    # On Windows PowerShell:
+    # (Ensure config_doc.json contains {"output_filename":"my_document.pdf"})
+    # (Replace ./path/to/ with actual relative or absolute paths e.g. ./test_images/01.webp)
+    curl.exe -X POST `
+      -F "images=@./path/to/your/image1.jpg" `
+      -F "images=@./path/to/your/image2.png" `
+      -F "config=<config_doc.json" `
+      http://localhost:8080/convert `
+      -o my_document.pdf
+    ```
 
 **2. Using image URLs:**
 
-```bash
-curl -X POST \
-  -F "image_urls=[\"https://www.google.com/images/branding/googlelogo/1x/googlelogo_light_color_272x92dp.png\"]" \
-  -F "config={\"output_filename\":\"from_url.pdf\", \"jpeg_quality\": 95}" \
-  http://localhost:8080/convert \
-  -o from_url.pdf
-```
+*   First, create a file named `config_url.json`, for example:
+    ```json
+    {"output_filename":"from_url.pdf", "jpeg_quality": 95}
+    ```
+*   Next, create a file named `image_urls_list.json`, for example:
+    ```json
+    ["https://www.google.com/images/branding/googlelogo/1x/googlelogo_light_color_272x92dp.png"]
+    ```
+*   Then, run `curl`:
+    ```bash
+    # On Linux/macOS or Git Bash on Windows:
+    curl -X POST \
+      -F "image_urls=<image_urls_list.json" \
+      -F "config=<config_url.json" \
+      http://localhost:8080/convert \
+      -o from_url.pdf
 
-**3. Combination of upload and URLs:**
+    # On Windows PowerShell:
+    # (Ensure config_url.json and image_urls_list.json are created with the content above)
+    curl.exe -X POST `
+      -F "image_urls=<image_urls_list.json" `
+      -F "config=<config_url.json" `
+      http://localhost:8080/convert `
+      -o from_url.pdf
+    ```
 
-```bash
-curl -X POST \
-  -F "images=@/path/to/local_image.webp" \
-  -F "image_urls=[\"https_example_com_remote_image.jpg\"]" \ # Replace with actual URL
-  -F "config={\"output_filename\":\"combined.pdf\"}" \
-  http://localhost:8080/convert \
-  -o combined.pdf
-```
+**3. Combination of local file uploads and image URLs:**
+
+*   Create/reuse `config_combined.json`, for example:
+    ```json
+    {"output_filename":"combined.pdf"}
+    ```
+*   Create/reuse `image_urls_list.json` (as in example 2).
+*   Then, run `curl`:
+    ```bash
+    # On Linux/macOS or Git Bash on Windows:
+    curl -X POST \
+      -F "images=@/path/to/local_image.webp" \
+      -F "image_urls=<image_urls_list.json" \
+      -F "config=<config_combined.json" \
+      http://localhost:8080/convert \
+      -o combined.pdf
+
+    # On Windows PowerShell:
+    # (Ensure config_combined.json and image_urls_list.json are created)
+    # (Replace ./path/to/ with actual relative or absolute paths e.g. ./test_images/01.webp)
+    curl.exe -X POST `
+      -F "images=@./path/to/local_image.webp" `
+      -F "image_urls=<image_urls_list.json" `
+      -F "config=<config_combined.json" `
+      http://localhost:8080/convert `
+      -o combined.pdf
+    ```
+
+**Important for PowerShell users:**
+The examples for PowerShell use `curl.exe` (the native Windows version of curl). If `curl` in your PowerShell is an alias for `Invoke-WebRequest`, the syntax, especially for file uploads (`-F`), will be different and more complex. It's recommended to use `curl.exe` (often available via Git for Windows or installable separately) for these types of multipart form requests. The examples use backticks (`) for line continuation in PowerShell.
 
 ### Health Check Endpoint: `GET /health`
 
